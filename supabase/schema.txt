@@ -1,0 +1,345 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE new_schema_archive.products (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name text NOT NULL CHECK (char_length(TRIM(BOTH FROM name)) > 0 AND char_length(name) <= 200),
+  type USER-DEFINED NOT NULL DEFAULT 'otros'::new_schema_archive.product_type,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  umbral integer NOT NULL DEFAULT 10 CHECK (umbral >= 0),
+  client_id text NOT NULL UNIQUE,
+  deleted_at timestamp with time zone,
+  unidad text NOT NULL DEFAULT 'und',
+  CONSTRAINT products_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.inventory (
+  product_id bigint NOT NULL,
+  qnty integer NOT NULL DEFAULT 0 CHECK (qnty >= 0),
+  CONSTRAINT inventory_pkey PRIMARY KEY (product_id),
+  CONSTRAINT inventory_product_id_fkey FOREIGN KEY (product_id) REFERENCES new_schema_archive.products(id)
+);
+CREATE TABLE new_schema_archive.phones (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  company_code text NOT NULL CHECK (company_code ~ '^(0412|0414|0416|0424|0426|02[0-9]{2})$'::text),
+  number text NOT NULL CHECK (number ~ '^[0-9]{7}$'::text),
+  CONSTRAINT phones_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.persons (
+  ci bigint NOT NULL CHECK (ci > 0),
+  name text NOT NULL CHECK (char_length(TRIM(BOTH FROM name)) > 0 AND char_length(name) <= 200),
+  surname text NOT NULL CHECK (char_length(TRIM(BOTH FROM surname)) > 0 AND char_length(surname) <= 200),
+  phone_id bigint NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  categoria USER-DEFINED,
+  CONSTRAINT persons_pkey PRIMARY KEY (ci),
+  CONSTRAINT persons_phone_id_fkey FOREIGN KEY (phone_id) REFERENCES new_schema_archive.phones(id)
+);
+CREATE TABLE new_schema_archive.movements (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  direction USER-DEFINED NOT NULL DEFAULT 'in'::new_schema_archive.movement_direction,
+  destination text CHECK (destination IS NULL OR char_length(destination) <= 200),
+  received_by bigint,
+  delivered_by bigint,
+  occurred_at timestamp with time zone NOT NULL DEFAULT now(),
+  note text CHECK (note IS NULL OR char_length(note) <= 2000),
+  client_op_id text UNIQUE,
+  CONSTRAINT movements_pkey PRIMARY KEY (id),
+  CONSTRAINT movements_delivered_by_fkey FOREIGN KEY (delivered_by) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT movements_received_by_fkey FOREIGN KEY (received_by) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.movement_items (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  movement_id bigint NOT NULL,
+  product_id bigint NOT NULL,
+  qnty integer NOT NULL CHECK (qnty > 0),
+  CONSTRAINT movement_items_pkey PRIMARY KEY (id),
+  CONSTRAINT movement_items_movement_id_fkey FOREIGN KEY (movement_id) REFERENCES new_schema_archive.movements(id),
+  CONSTRAINT movement_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES new_schema_archive.products(id)
+);
+CREATE TABLE new_schema_archive.requests (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  product_id bigint NOT NULL,
+  requester_id bigint,
+  qnty integer NOT NULL CHECK (qnty > 0),
+  qnty_outstanding integer NOT NULL CHECK (qnty_outstanding >= 0),
+  status USER-DEFINED NOT NULL DEFAULT 'open'::new_schema_archive.request_status,
+  requested_at timestamp with time zone NOT NULL DEFAULT now(),
+  note text CHECK (note IS NULL OR char_length(note) <= 2000),
+  CONSTRAINT requests_pkey PRIMARY KEY (id),
+  CONSTRAINT requests_product_id_fkey FOREIGN KEY (product_id) REFERENCES new_schema_archive.products(id),
+  CONSTRAINT requests_requester_id_fkey FOREIGN KEY (requester_id) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.user_profiles (
+  id uuid NOT NULL,
+  nombre text NOT NULL CHECK (char_length(TRIM(BOTH FROM nombre)) > 0),
+  CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+CREATE TABLE new_schema_archive.checkpoints (
+  id text NOT NULL,
+  creado_por text NOT NULL,
+  data jsonb NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT checkpoints_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.comms (
+  id text NOT NULL,
+  titulo text NOT NULL CHECK (char_length(TRIM(BOTH FROM titulo)) > 0),
+  urgencia text NOT NULL CHECK (urgencia = ANY (ARRAY['info'::text, 'urgente'::text, 'critico'::text])),
+  cuerpo text NOT NULL CHECK (char_length(TRIM(BOTH FROM cuerpo)) > 0),
+  autor text NOT NULL DEFAULT 'Anónimo'::text,
+  activo boolean NOT NULL DEFAULT true,
+  fecha bigint NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT comms_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.comandas_viejas (
+  id integer NOT NULL DEFAULT nextval('new_schema_archive.comanda_id_seq'::regclass),
+  nombre_centro character varying,
+  solicitante character varying,
+  solicitante_cedula character varying,
+  solicitante_telefono character varying,
+  direccion text,
+  estudiante_resp character varying,
+  estudiante_resp_cedula character varying,
+  estudiante_resp_telefono character varying,
+  conductor character varying,
+  conductor_cedula character varying,
+  conductor_telefono character varying,
+  placa_vehiculo character varying,
+  tipo_vehiculo character varying,
+  firma_receptor boolean DEFAULT false,
+  ocr_raw_response text,
+  ocr_error text,
+  ocr_model character varying,
+  confianza_campos jsonb,
+  CONSTRAINT comandas_viejas_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.comanda_items (
+  id integer NOT NULL DEFAULT nextval('new_schema_archive.comanda_items_id_seq'::regclass),
+  producto character varying NOT NULL,
+  cantidad numeric,
+  unidad character varying,
+  confianza character varying,
+  confianza_pct integer,
+  producto_id bigint,
+  comanda_id integer NOT NULL,
+  CONSTRAINT comanda_items_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_comanda_items_producto FOREIGN KEY (producto_id) REFERENCES new_schema_archive.products(id),
+  CONSTRAINT fk_comanda FOREIGN KEY (comanda_id) REFERENCES new_schema_archive.comandas(id)
+);
+CREATE TABLE new_schema_archive.alembic_version (
+  version_num character varying NOT NULL,
+  CONSTRAINT alembic_version_pkey PRIMARY KEY (version_num)
+);
+CREATE TABLE new_schema_archive.person_credentials (
+  ci bigint NOT NULL,
+  password character varying NOT NULL,
+  role USER-DEFINED NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone,
+  CONSTRAINT person_credentials_pkey PRIMARY KEY (ci),
+  CONSTRAINT person_credentials_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.ucevistas (
+  ci bigint NOT NULL,
+  carrera character varying NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone,
+  CONSTRAINT ucevistas_pkey PRIMARY KEY (ci),
+  CONSTRAINT ucevistas_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.municipios (
+  id smallint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  nombre text NOT NULL UNIQUE CHECK (char_length(TRIM(BOTH FROM nombre)) > 0 AND char_length(nombre) <= 150),
+  CONSTRAINT municipios_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.parroquias (
+  id smallint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  nombre text NOT NULL CHECK (char_length(TRIM(BOTH FROM nombre)) > 0 AND char_length(nombre) <= 150),
+  municipio_id smallint NOT NULL,
+  CONSTRAINT parroquias_pkey PRIMARY KEY (id),
+  CONSTRAINT parroquias_municipio_fkey FOREIGN KEY (municipio_id) REFERENCES new_schema_archive.municipios(id)
+);
+CREATE TABLE new_schema_archive.rutas_ejes (
+  id smallint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  nombre text NOT NULL UNIQUE CHECK (char_length(TRIM(BOTH FROM nombre)) > 0 AND char_length(nombre) <= 300),
+  CONSTRAINT rutas_ejes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.ubicaciones (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  codigo text CHECK (codigo IS NULL OR char_length(codigo) <= 20),
+  nombre text NOT NULL CHECK (char_length(TRIM(BOTH FROM nombre)) > 0 AND char_length(nombre) <= 300),
+  tipo USER-DEFINED NOT NULL DEFAULT 'otro'::new_schema_archive.ubicacion_tipo,
+  estado USER-DEFINED NOT NULL DEFAULT 'por_confirmar'::new_schema_archive.ubicacion_estado,
+  municipio_id smallint,
+  parroquia_id smallint,
+  ruta_eje_id smallint,
+  ubicacion_exacta text CHECK (ubicacion_exacta IS NULL OR char_length(ubicacion_exacta) <= 500),
+  referencia_gps text CHECK (referencia_gps IS NULL OR char_length(referencia_gps) <= 300),
+  tipo_albergue USER-DEFINED,
+  tipo_espacio USER-DEFINED,
+  vulnerabilidad USER-DEFINED,
+  beneficiarios_familias integer CHECK (beneficiarios_familias IS NULL OR beneficiarios_familias >= 0),
+  beneficiarios_ninos integer CHECK (beneficiarios_ninos IS NULL OR beneficiarios_ninos >= 0),
+  desglose_poblacion text,
+  requerimientos text,
+  atencion_requerida text,
+  capacidad_logistica text,
+  capacidades_atencion text,
+  confirmado_por text CHECK (confirmado_por IS NULL OR char_length(confirmado_por) <= 200),
+  observaciones text,
+  transporte_notas text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  deleted_at timestamp with time zone,
+  verificador_ci bigint,
+  verificador text CHECK (verificador IS NULL OR char_length(verificador) <= 200),
+  verificador_asignado_en timestamp with time zone,
+  es_generica boolean NOT NULL DEFAULT false,
+  beneficiarios_hombres integer CHECK (beneficiarios_hombres IS NULL OR beneficiarios_hombres >= 0),
+  beneficiarios_mujeres integer CHECK (beneficiarios_mujeres IS NULL OR beneficiarios_mujeres >= 0),
+  beneficiarios_adultos_mayores integer CHECK (beneficiarios_adultos_mayores IS NULL OR beneficiarios_adultos_mayores >= 0),
+  CONSTRAINT ubicaciones_pkey PRIMARY KEY (id),
+  CONSTRAINT ubicaciones_municipio_fkey FOREIGN KEY (municipio_id) REFERENCES new_schema_archive.municipios(id),
+  CONSTRAINT ubicaciones_parroquia_fkey FOREIGN KEY (parroquia_id) REFERENCES new_schema_archive.parroquias(id),
+  CONSTRAINT ubicaciones_ruta_eje_fkey FOREIGN KEY (ruta_eje_id) REFERENCES new_schema_archive.rutas_ejes(id),
+  CONSTRAINT ubicaciones_verificador_ci_fkey FOREIGN KEY (verificador_ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.ubicacion_contactos (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  ubicacion_id bigint NOT NULL,
+  nombre text NOT NULL CHECK (char_length(TRIM(BOTH FROM nombre)) > 0 AND char_length(nombre) <= 200),
+  telefono text CHECK (telefono IS NULL OR char_length(telefono) <= 100),
+  rol text CHECK (rol IS NULL OR char_length(rol) <= 200),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT ubicacion_contactos_pkey PRIMARY KEY (id),
+  CONSTRAINT ubicacion_contactos_ubicacion_fkey FOREIGN KEY (ubicacion_id) REFERENCES new_schema_archive.ubicaciones(id)
+);
+CREATE TABLE new_schema_archive.ubicacion_snapshots (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  ubicacion_id bigint NOT NULL,
+  registrado_por bigint,
+  estado USER-DEFINED,
+  num_personas integer CHECK (num_personas IS NULL OR num_personas >= 0),
+  num_familias integer CHECK (num_familias IS NULL OR num_familias >= 0),
+  num_ninos integer CHECK (num_ninos IS NULL OR num_ninos >= 0),
+  requerimientos text,
+  notas text,
+  registrado_en timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT ubicacion_snapshots_pkey PRIMARY KEY (id),
+  CONSTRAINT ubicacion_snapshots_ubicacion_fkey FOREIGN KEY (ubicacion_id) REFERENCES new_schema_archive.ubicaciones(id),
+  CONSTRAINT ubicacion_snapshots_registrado_por_fkey FOREIGN KEY (registrado_por) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.comanda_imagenes (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  filename character varying NOT NULL,
+  url character varying NOT NULL,
+  tipo USER-DEFINED NOT NULL DEFAULT 'otra'::new_schema_archive.comanda_imagen_tipo,
+  created_by_ci bigint,
+  created_by character varying,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  comanda_id integer NOT NULL,
+  CONSTRAINT comanda_imagenes_pkey PRIMARY KEY (id),
+  CONSTRAINT comanda_imagenes_created_by_fkey FOREIGN KEY (created_by_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comanda_imagenes_comanda_fkey FOREIGN KEY (comanda_id) REFERENCES new_schema_archive.comandas(id)
+);
+CREATE TABLE new_schema_archive.ubicacion_imagenes (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  ubicacion_id bigint NOT NULL,
+  filename text NOT NULL CHECK (char_length(filename) <= 255),
+  url text NOT NULL,
+  created_by_ci bigint,
+  created_by text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT ubicacion_imagenes_pkey PRIMARY KEY (id),
+  CONSTRAINT ubicacion_imagenes_ubicacion_fkey FOREIGN KEY (ubicacion_id) REFERENCES new_schema_archive.ubicaciones(id),
+  CONSTRAINT ubicacion_imagenes_created_by_fkey FOREIGN KEY (created_by_ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.conductores (
+  ci bigint NOT NULL,
+  activo boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone,
+  CONSTRAINT conductores_pkey PRIMARY KEY (ci),
+  CONSTRAINT conductores_person_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.conductor_vehiculos (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  conductor_ci bigint NOT NULL,
+  tipo_vehiculo USER-DEFINED NOT NULL,
+  placa character varying NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT conductor_vehiculos_pkey PRIMARY KEY (id),
+  CONSTRAINT conductor_vehiculos_conductor_fkey FOREIGN KEY (conductor_ci) REFERENCES new_schema_archive.conductores(ci)
+);
+CREATE TABLE new_schema_archive.conductor_dias (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  conductor_ci bigint NOT NULL,
+  dia USER-DEFINED NOT NULL,
+  CONSTRAINT conductor_dias_pkey PRIMARY KEY (id),
+  CONSTRAINT conductor_dias_conductor_fkey FOREIGN KEY (conductor_ci) REFERENCES new_schema_archive.conductores(ci)
+);
+CREATE TABLE new_schema_archive.conductor_horarios (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  conductor_ci bigint NOT NULL,
+  bloque USER-DEFINED NOT NULL,
+  CONSTRAINT conductor_horarios_pkey PRIMARY KEY (id),
+  CONSTRAINT conductor_horarios_conductor_fkey FOREIGN KEY (conductor_ci) REFERENCES new_schema_archive.conductores(ci)
+);
+CREATE TABLE new_schema_archive.conductor_zonas (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  conductor_ci bigint NOT NULL,
+  zona USER-DEFINED NOT NULL,
+  CONSTRAINT conductor_zonas_pkey PRIMARY KEY (id),
+  CONSTRAINT conductor_zonas_conductor_fkey FOREIGN KEY (conductor_ci) REFERENCES new_schema_archive.conductores(ci)
+);
+CREATE TABLE new_schema_archive.comandas (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  comanda_vieja_id integer,
+  solicitante_ci bigint,
+  estudiante_resp_ci bigint,
+  conductor_ci bigint,
+  ubicacion_id bigint,
+  fecha date,
+  prioridad character varying,
+  hora_salida time without time zone,
+  hora_llegada time without time zone,
+  autorizado_por character varying,
+  notas text,
+  status USER-DEFINED NOT NULL DEFAULT 'pending'::new_schema_archive.comandastatus,
+  origen USER-DEFINED NOT NULL,
+  responsable_entrega_ci bigint,
+  aprobado_por_ci bigint,
+  aprobado_por character varying,
+  created_by_ci bigint,
+  created_by character varying,
+  last_edited_by_ci bigint,
+  last_edited_by character varying,
+  locked_by character varying,
+  locked_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone,
+  processed_at timestamp with time zone,
+  exported_at timestamp with time zone,
+  deleted_at timestamp with time zone,
+  beneficiarios_hombres integer CHECK (beneficiarios_hombres IS NULL OR beneficiarios_hombres >= 0),
+  beneficiarios_mujeres integer CHECK (beneficiarios_mujeres IS NULL OR beneficiarios_mujeres >= 0),
+  beneficiarios_ninos integer CHECK (beneficiarios_ninos IS NULL OR beneficiarios_ninos >= 0),
+  beneficiarios_adultos_mayores integer CHECK (beneficiarios_adultos_mayores IS NULL OR beneficiarios_adultos_mayores >= 0),
+  beneficiarios_familias integer CHECK (beneficiarios_familias IS NULL OR beneficiarios_familias >= 0),
+  CONSTRAINT comandas_pkey PRIMARY KEY (id),
+  CONSTRAINT comandas_comanda_vieja_fkey FOREIGN KEY (comanda_vieja_id) REFERENCES new_schema_archive.comandas_viejas(id),
+  CONSTRAINT comandas_solicitante_fkey FOREIGN KEY (solicitante_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comandas_estudiante_resp_fkey FOREIGN KEY (estudiante_resp_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comandas_conductor_fkey FOREIGN KEY (conductor_ci) REFERENCES new_schema_archive.conductores(ci),
+  CONSTRAINT comandas_ubicacion_fkey FOREIGN KEY (ubicacion_id) REFERENCES new_schema_archive.ubicaciones(id),
+  CONSTRAINT comandas_responsable_entrega_fkey FOREIGN KEY (responsable_entrega_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comandas_aprobado_por_fkey FOREIGN KEY (aprobado_por_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comandas_created_by_fkey FOREIGN KEY (created_by_ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT comandas_last_edited_by_fkey FOREIGN KEY (last_edited_by_ci) REFERENCES new_schema_archive.persons(ci)
+);

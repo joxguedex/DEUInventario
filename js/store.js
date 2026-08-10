@@ -1,0 +1,423 @@
+// ── Estado central del inventario ─────────────────────────
+
+import { db }                    from './db.js';
+import { sync, tombstones }      from './sync.js';
+import { auth }                  from './auth.js';
+import { CATALOGO }       from './seed.js';
+import { nowISO, uid, normSearch, catLabel } from './helpers.js';
+import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+import { DB_SCHEMA } from './env-config.js';
+
+function _commHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    'Accept-Profile': DB_SCHEMA,
+    'Content-Profile': DB_SCHEMA,
+    ...extra,
+  };
+}
+
+// Etiqueta "Nombre · Área" (o "Nombre · Administrador") para atribuir cada
+// movimiento a quien lo hizo, mismo formato que UCVAcopio (js/store.js#_actorNote
+// allá) — comparten la misma tabla `movements`, así que la Bitácora ya sabe
+// leer este patrón sin más cambios (ver registro.js). Los admin no tienen
+// área asignada, por eso el caso especial.
+function _conTag(nombre) {
+  if (!nombre) return null;
+  const area = auth.area();
+  const tag = auth.isAdmin() ? 'Administrador' : (area ? catLabel(area) : null);
+  return tag ? `${nombre} · ${tag}` : nombre;
+}
+
+export const store = {
+  items: [],          // catálogo con cantidad contada
+  logs: [],           // bitácora de registros de conteo (append-only)
+  contadorNombre: '',
+
+  // ── Carga inicial ───────────────────────────────────────
+  async init() {
+    this.contadorNombre = localStorage.getItem('ucv-inv-contador') || '';
+
+    // Un insumo fusionado en la nube no debe volver a sembrarse desde seed.js.
+    const muertos = tombstones();
+    const semilla = CATALOGO.filter(c => !muertos.has(c.id));
+
+    let local = await db.getAll();
+    let desdeCero = false;
+    if (local.length === 0) {
+      // IndexedDB vacío: o es la primera vez, o el navegador desalojó el
+      // almacenamiento (frecuente en móvil). localStorage sobrevive a ese
+      // desalojo, así que el checkpoint del pull incremental sigue apuntando
+      // al futuro y NO traería los insumos ya contados: el catálogo se
+      // quedaría en cero para siempre. Hay que olvidar el checkpoint.
+      desdeCero = true;
+      const seeded = semilla.map(c => ({
+        ...c, cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(),
+      }));
+      await db.bulkPut(seeded);
+      local = seeded;
+    } else {
+      const known = new Set(local.map(i => i.id));
+      const nuevos = semilla.filter(c => !known.has(c.id))
+        .map(c => ({ ...c, cantidad: 0, contado: false, contado_por: null, updated_at: nowISO() }));
+      if (nuevos.length) { await db.bulkPut(nuevos); local = local.concat(nuevos); }
+    }
+    this.items = local;
+    this.logs  = await db.logGetAll();
+
+    if (sync.enabled) {
+      if (desdeCero) sync.resetCheckpoint();   // catálogo recién sembrado → pull completo
+      try { await sync.run(); this.items = await db.getAll(); this.logs = await db.logGetAll(); }
+      catch (e) { console.error('sync inicial', e); }
+    }
+    return this.items;
+  },
+
+  setContador(nombre) {
+    this.contadorNombre = (nombre || '').trim();
+    localStorage.setItem('ucv-inv-contador', this.contadorNombre);
+  },
+
+  find(id) { return this.items.find(i => i.id === id); },
+
+  // Ítems visibles para la sesión activa: un coordinador solo ve el catálogo
+  // de su propia área (una de las 13 categorías de insumos, ver
+  // helpers.js#CATS); admin ve el catálogo completo sin restricción. El
+  // coordinador del área "General" (auth.isGeneral()) también ve el catálogo
+  // completo sin restricción, igual que admin — no tiene ítems propios (no es
+  // una categoría real), solo consulta el inventario de todas las demás áreas
+  // (nunca lo edita, ver auth.js#canEditInventory() y las vistas que lo
+  // consultan). Control de acceso 100% del lado del cliente, mismo criterio
+  // que el resto del sistema (ver 05-autenticacion.md).
+  visibleItems() {
+    if (auth.isCoordinador() && !auth.isGeneral()) {
+      const area = auth.area();
+      return this.items.filter(i => i.categoria === area);
+    }
+    return this.items;
+  },
+
+  // ── Registrar un conteo (suma un delta y lo apunta en la bitácora) ──
+  async registrar(itemId, delta, opts = {}) {
+    const item = this.find(itemId);
+    if (!item) return null;
+    delta = Math.round(Number(delta) || 0);
+    const nuevo = Math.max(0, item.cantidad + delta);
+    const aplicado = nuevo - item.cantidad;   // delta real (por si se topa en 0)
+
+    item.cantidad    = nuevo;
+    item.contado     = true;
+    item.contado_por = _conTag(this.contadorNombre) || item.contado_por || null;
+    item.updated_at  = nowISO();
+    item.dirty       = true;
+    await db.put(item);
+    if (item.nuevo) {
+      await sync.enqueue('products', item);
+    }
+
+    if (aplicado !== 0 || opts.forceLog) {
+      const entry = {
+        id: uid(),
+        item_id: item.id,
+        nombre: item.nombre,
+        categoria: item.categoria,
+        unidad: item.unidad,
+        cantidad: aplicado,          // delta aplicado (puede ser negativo = corrección)
+        ts: nowISO(),
+        contado_por: item.contado_por,
+        deleted_at: null,
+      };
+      this.logs.push(entry);
+      await db.logPut(entry);
+      await sync.enqueue('conteo', entry);
+    }
+    return item;
+  },
+
+  // ── Fijar el total contado exacto (calcula el delta y lo registra) ──
+  async setTotal(itemId, total) {
+    const item = this.find(itemId);
+    if (!item) return null;
+    total = Math.max(0, Math.round(Number(total) || 0));
+    const delta = total - item.cantidad;
+    if (delta !== 0) return this.registrar(itemId, delta);
+    // delta 0: si aún no estaba contado, marcarlo (confirma el total actual, incl. 0)
+    if (!item.contado) return this.registrar(itemId, 0, { forceLog: true });
+    return item;
+  },
+
+  marcarCero(id) { return this.setTotal(id, 0); },
+
+  // ── Subir la diferencia de un insumo que YA conté ───────
+  // NO toca la cantidad local: la local ya es el número bueno. Solo encola el
+  // delta que le falta a la nube para alcanzarla. Lo usa "Revisar mi conteo"
+  // cuando una subida se perdió y la nube quedó atrás, sin obligar al
+  // voluntario a recontar ni pisar lo que otros contaron en otros insumos.
+  async subirDiferencia(itemId, delta) {
+    const item = this.find(itemId);
+    delta = Math.round(Number(delta) || 0);
+    if (!item || delta === 0) return null;
+
+    const entry = {
+      id: uid(),
+      item_id: item.id,
+      nombre: item.nombre,
+      categoria: item.categoria,
+      unidad: item.unidad,
+      cantidad: delta,
+      ts: nowISO(),
+      contado_por: _conTag(this.contadorNombre) || item.contado_por || null,
+      deleted_at: null,
+    };
+    this.logs.push(entry);
+    await db.logPut(entry);
+    await sync.enqueue('conteo', entry);
+    return entry;
+  },
+
+  // ── Crear un insumo nuevo (no estaba en el catálogo) ────
+  async addNuevo({ nombre, categoria = 'alimentos_no_perecederos', unidad = 'und', umbral = 0, cantidad = 0 }) {
+    nombre = (nombre || '').trim();
+    if (!nombre) return null;
+    let item = this.items.find(i => normSearch(i.nombre) === normSearch(nombre));
+    if (item) {
+      item.categoria = categoria;
+      item.unidad = unidad;
+      item.umbral = Math.max(0, Math.round(umbral) || 0);
+      item.cantidad = 0;
+      item.contado = false;
+      item.contado_por = null;
+      item.updated_at = nowISO();
+      item.deleted_at = null;
+      item.nuevo = true;
+    } else {
+      item = {
+        id: 'new-' + uid(),
+        nombre, categoria, unidad, umbral: Math.max(0, Math.round(umbral) || 0),
+        cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(), nuevo: true,
+      };
+      this.items.push(item);
+    }
+    await db.put(item);
+    await sync.enqueue('products', item);
+    if (cantidad > 0) await this.registrar(item.id, cantidad);
+    else await this.setTotal(item.id, 0);
+    return item;
+  },
+
+  // ── Eliminar un insumo del catálogo ─────────────────────
+  async deleteInsumo(id) {
+    const it = this.find(id);
+    if (!it) return false;
+    it.deleted_at = nowISO();
+    it.updated_at = nowISO();
+    await db.put(it);
+    await sync.enqueue('products', it);
+    return true;
+  },
+
+  // ── Renombrar un insumo (sin tocar stock/categoría) ─────
+  async renombrarInsumo(id, nuevoNombre) {
+    const it = this.find(id);
+    nuevoNombre = (nuevoNombre || '').trim();
+    if (!it || !nuevoNombre) return null;
+    it.nombre = nuevoNombre;
+    it.updated_at = nowISO();
+    it.dirty = true;
+    await db.put(it);
+    await sync.enqueue('products', it);
+    return it;
+  },
+
+  // ── Fusionar un insumo duplicado en otro ya existente ───
+  // Usado por "Renombrar" cuando, en vez de escribir un nombre nuevo, el
+  // usuario elige un insumo que ya está en el catálogo: el stock de `sourceId`
+  // se suma a `targetId` y `sourceId` se elimina (soft delete), para limpiar
+  // duplicados/variantes mal escritas sin perder lo ya contado. Además se
+  // encola un 'merge' para el RPC merge_product (new_schema_archive): sin
+  // eso, el HISTORIAL viejo de `sourceId` (Bitácora/Resumen · Ingresos)
+  // se quedaría apuntando a esa fila ya fusionada para siempre, en vez de
+  // aparecer bajo la identidad del insumo destino — ver
+  // supabase/2026-08-03-merge-product-history.sql.
+  async fusionarInsumo(sourceId, targetId) {
+    const source = this.find(sourceId);
+    const target = this.find(targetId);
+    if (!source || !target || source.id === target.id) return null;
+    await this.registrar(target.id, source.cantidad);
+    await this.deleteInsumo(source.id);
+    if (sync.enabled) await sync.enqueue('merge', { source_item_id: source.id, target_item_id: target.id });
+    return target;
+  },
+
+  // ── Borrar/corregir un registro de la bitácora ──────────
+  // logId es el client_op_id del movimiento en la nube (la vista de bitácora
+  // lo trae en cada fila). El RPC delete_count borra ESE movimiento y revierte
+  // su efecto en el stock; sin eso, borrar solo agregaba una corrección y el
+  // registro original nunca desaparecía.
+  async deleteLog(logId, fallback = null) {
+    let entry = this.logs.find(l => l.id === logId);
+    if (!entry) {
+      if (!fallback) return null;
+      entry = {
+        id: logId,
+        item_id: fallback.item_id,
+        nombre: fallback.nombre || '',
+        categoria: fallback.categoria || 'alimentos_no_perecederos',
+        unidad: fallback.unidad || 'und',
+        cantidad: fallback.cantidad,
+        ts: fallback.ts || nowISO(),
+        contado_por: fallback.contado_por,
+        deleted_at: null
+      };
+      this.logs.push(entry);
+    }
+    if (entry.deleted_at) return null;
+    entry.deleted_at = nowISO();
+    await db.logPut(entry);
+
+    // Borrado real en la nube (idempotente): directo si hay red, si no a la cola.
+    if (sync.enabled) {
+      const ok = navigator.onLine && await sync.deleteCount(logId).catch(() => false);
+      // item_id acompaña a la op para que el push sepa a qué insumo pertenece
+      // y solo retenga las ops de ESE insumo si esta se queda atascada.
+      if (!ok) await sync.enqueue('delcount', { client_op_id: logId, item_id: entry.item_id });
+    }
+
+    const item = this.find(entry.item_id);
+    if (item) {
+      item.cantidad = Math.max(0, item.cantidad - entry.cantidad);
+      const quedan = this.logs.some(l => l.item_id === item.id && !l.deleted_at);
+      item.contado = quedan;
+      item.updated_at = nowISO();
+      item.dirty = true;
+      await db.put(item);
+    }
+    return item;
+  },
+
+  // ── Deshacer todo el conteo de un insumo (desmarcar) ────
+  // El RPC uncount_item deja qnty=0 y last_counted_at=NULL en la nube, para
+  // que el pull lo derive como NO contado. Antes se enviaban deltas negativos
+  // vía apply_count, que volvía a sellar last_counted_at y el insumo reaparecía
+  // marcado tras recargar.
+  async resetItem(id) {
+    const item = this.find(id);
+    if (!item) return null;
+    for (const l of this.logs) {
+      if (l.item_id === id && !l.deleted_at) {
+        l.deleted_at = nowISO();
+        await db.logPut(l);
+      }
+    }
+    item.cantidad = 0; item.contado = false; item.contado_por = null;
+    item.updated_at = nowISO(); item.dirty = true;
+    await db.put(item);
+    if (sync.enabled) await sync.enqueue('uncount', { item_id: item.id });
+    return item;
+  },
+
+  activeLogs() { return this.logs.filter(l => !l.deleted_at); },
+
+  // ── Métricas ────────────────────────────────────────────
+  stats() {
+    const active = this.visibleItems().filter(i => !i.deleted_at);
+    const total = active.length;
+    const contados = active.filter(i => i.contado).length;
+    const unidades = active.reduce((s, i) => s + (i.contado ? i.cantidad : 0), 0);
+    return { total, contados, pendientes: total - contados, unidades };
+  },
+
+  statsByCat() {
+    const m = {};
+    for (const i of this.visibleItems()) {
+      if (i.deleted_at) continue;
+      (m[i.categoria] ||= { total: 0, contados: 0, unidades: 0 });
+      m[i.categoria].total++;
+      if (i.contado) { m[i.categoria].contados++; m[i.categoria].unidades += i.cantidad; }
+    }
+    return m;
+  },
+
+  grouped() {
+    const cat = {};
+    for (const it of this.visibleItems()) {
+      if (it.deleted_at) continue;
+      if (!cat[it.categoria]) cat[it.categoria] = [];
+      cat[it.categoria].push(it);
+    }
+    return cat;
+  },
+
+  csv() {
+    const head = ['nombre', 'categoria', 'unidad', 'cantidad', 'contado_por'];
+    return [head.join(','), ...this.visibleItems().filter(i => !i.deleted_at).map(i => [
+      `"${i.nombre}"`, i.categoria, i.unidad, i.cantidad, `"${i.contado_por || ''}"`
+    ].join(','))].join('\n');
+  },
+
+  // ── Comunicados (tabla compartida con UCVAcopio/UCVComandas, misma
+  // new_schema_archive.comms) — pestaña puente entre los 3 sistemas
+  // hermanos, agregada 2026-07-28. Online-only, sin caché/cola local, igual
+  // que el resto de esta sección en UCVAcopio (nunca formó parte del motor
+  // offline de conteo). ──────────────────────────────────────────────────
+  communications: [],
+
+  get activeCommunications() { return this.communications.filter(c => c.activo); },
+
+  _validateCommunication(data) {
+    if (!data.titulo?.trim()) throw new Error('El título es obligatorio');
+    if (!data.cuerpo?.trim()) throw new Error('El mensaje es obligatorio');
+  },
+
+  // Alcance (2026-07-28): UCVInventario es el sistema "toldos" — solo ve
+  // comunicados 'general'/'toldos', nunca 'recepcion'/'sala_situacional'
+  // (filtrado en la propia consulta; columna + RPC nuevos vía migración
+  // compartida, ver UCVAcopio/supabase/20-comunicados-alcance-2026-07-28.sql).
+  // No depende del rol de quien mira.
+  async loadCommunications() {
+    if (!navigator.onLine) throw new Error('Offline');
+    const url = `${SUPABASE_URL}/rest/v1/comms?select=*&alcance=in.(general,toldos)&order=created_at.desc`;
+    const res = await fetch(url, { headers: _commHeaders() });
+    if (!res.ok) throw new Error(`No se pudieron cargar comunicados (${res.status})`);
+    const rows = await res.json();
+    this.communications = rows.map(r => ({
+      id:       r.id.toString(),
+      titulo:   r.titulo,
+      cuerpo:   r.cuerpo,
+      urgencia: r.urgencia,
+      autor:    r.autor,
+      activo:   r.activo,
+      alcance:  r.alcance,
+      fecha:    r.created_at,
+    }));
+  },
+
+  // Publicar/editar vía RPC save_comunicado (SECURITY DEFINER, exige sesión
+  // válida) — mismo endpoint compartido que usa UCVAcopio, hace upsert por
+  // `id` así que no hace falta distinguir crear/editar acá. Llama al overload
+  // de 8 parámetros (con p_alcance).
+  async saveCommunication(data) {
+    this._validateCommunication(data);
+    if (!navigator.onLine) throw new Error('Offline');
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/save_comunicado`, {
+      method: 'POST',
+      headers: _commHeaders(),
+      body: JSON.stringify({
+        p_actor_ci: auth.ci(),
+        p_id:       data.id || uid(),
+        p_titulo:   data.titulo,
+        p_cuerpo:   data.cuerpo,
+        p_urgencia: data.urgencia,
+        p_autor:    data.autor,
+        p_activo:   data.activo,
+        p_alcance:  data.alcance || 'general',
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Error al publicar comunicado (${res.status})`);
+    await this.loadCommunications();
+  },
+};

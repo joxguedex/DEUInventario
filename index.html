@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Inventario UCV — Conteo Físico</title>
+<meta name="theme-color" content="#111827">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inventario UCV">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ═══ Muro de Login ═══ -->
+<div id="login-wall" class="login-wall" style="display:none">
+  <!-- El contenido se inyectará desde admin.js -->
+</div>
+
+<!-- ═══ Interfaz Principal (App Shell) ═══ -->
+<div id="app-shell" style="display:none">
+
+<!-- ═══ Top nav (desktop) ═══ -->
+<header class="topnav">
+  <div class="tn-brand">Inventario<span>UCV</span> <span id="version-badge" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></div>
+  <nav class="tn-nav">
+    <button class="tn-item active" data-page="conteo">Conteo físico</button>
+    <button class="tn-item" data-page="registro">Bitácora</button>
+    <button class="tn-item" data-page="resumen">Resumen</button>
+    <button class="tn-item" data-page="despachos">Despachos<span id="dsp-badge-desktop" style="display:none;margin-left:6px;min-width:16px;height:16px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span></button>
+    <button class="tn-item" data-page="comunicados">Comunicados<span class="nav-badge" id="nb-comms" style="display:none">0</span></button>
+    <button class="tn-item" data-page="voluntarios">Usuarios</button>
+  </nav>
+  <div class="tn-right">
+    <button class="push-btn" id="push-btn" title="Comparar mi conteo con la nube y subir lo que falte">
+      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      <span>Subir mi conteo</span>
+    </button>
+    <div class="sync-pill local" id="sync-pill" title="Sincronizar">
+      <div class="sync-dot"></div><span id="sync-label">Solo local</span>
+    </div>
+    <button class="auth-btn eg-open-btn" id="eg-open-btn" title="Egreso Rápido — genera una comanda de entrega">
+      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      <span>Egreso Rápido</span>
+    </button>
+    <button class="auth-btn" id="auth-btn">
+      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-width="2.5"/><path stroke-width="2.5" stroke-linecap="round" d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      <span id="auth-label">Coordinador</span>
+    </button>
+  </div>
+</header>
+
+<!-- ═══ Topbar (móvil) ═══ -->
+<div class="m-topbar">
+  <span class="m-brand">Inventario<span>UCV</span> <span id="version-badge-m" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></span>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="push-btn push-btn-m" id="push-btn-m" aria-label="Subir mi conteo">
+      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    </button>
+    <div class="sync-pill local" id="sync-pill-m">
+      <div class="sync-dot"></div><span id="sync-label-m">Local</span>
+    </div>
+    <button class="auth-btn" id="auth-btn-m">
+      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-width="2.5"/><path stroke-width="2.5" stroke-linecap="round" d="M7 11V7a5 5 0 0110 0v4"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ═══ Status bar (desktop) ═══ -->
+<div class="statusbar">
+  <div class="stb-left">
+    <div class="stb-radar"><div class="r-dot"></div><div class="r-ring"></div><div class="r-ring"></div></div>
+    <span class="stb-label">CONTEO EN CURSO</span>
+    <span class="stb-div">·</span>
+    <span class="clock-time"></span>
+    <span class="stb-div">·</span>
+    <span class="clock-date"></span>
+  </div>
+  <span id="page-title" class="stb-page">Conteo Físico</span>
+</div>
+
+<div class="app">
+
+  <!-- ═══ Panel de Ingreso Rápido (izquierda / hoja móvil) ═══ -->
+  <aside class="quickadd" id="ingresorapido"></aside>
+
+  <!-- ═══ Contenido ═══ -->
+  <main class="main">
+    <div class="content">
+      <div id="page-conteo"></div>
+      <div id="page-registro" style="display:none"></div>
+      <div id="page-resumen" style="display:none"></div>
+      <div id="page-despachos" style="display:none"></div>
+      <div id="page-comunicados" style="display:none">
+        <div class="sec-header">
+          <div>
+            <div class="sec-eyebrow">Información</div>
+            <div class="sec-title">Comunicados y Necesidades</div>
+          </div>
+          <button id="btn-add-comm" class="btn btn-amber">
+            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+            </svg>
+            Nuevo comunicado
+          </button>
+        </div>
+        <div class="filter-row" id="comm-filters">
+          <button class="fbtn fa-todos" data-filter="todos">Todos</button>
+          <button class="fbtn" data-filter="critico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Crítico</button>
+          <button class="fbtn" data-filter="urgente"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Urgente</button>
+          <button class="fbtn" data-filter="info"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Informativo</button>
+          <button class="fbtn" data-filter="resueltos"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Resueltos</button>
+        </div>
+        <div id="comm-list"></div>
+      </div>
+      <div id="page-voluntarios" style="display:none"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══ Egreso Rápido: overlay de pantalla completa (todos los viewports) ═══ -->
+<aside class="egresorapido" id="egresorapido"></aside>
+
+<!-- ═══ Móvil: backdrop + FAB + bottom nav ═══ -->
+<div class="qa-backdrop" id="qa-backdrop"></div>
+<button class="fab" id="fab-qa" aria-label="Ingreso rápido">
+  <svg width="26" height="26" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+</button>
+<button class="fab fab-eg" id="fab-eg" aria-label="Egreso rápido">
+  <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+</button>
+<nav class="m-bottomnav">
+  <button class="mbn-item active" data-page="conteo">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    <span>Conteo</span>
+  </button>
+  <button class="mbn-item" data-page="registro">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h6"/></svg>
+    <span>Bitácora</span>
+  </button>
+  <button class="mbn-item" data-page="resumen">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    <span>Resumen</span>
+  </button>
+  <button class="mbn-item" data-page="despachos">
+    <span style="position:relative;display:inline-block;">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05"/><path d="M12 22.08V12"/></svg>
+      <span id="dsp-badge-mobile" style="display:none;position:absolute;top:-4px;right:-6px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;font-weight:700;line-height:15px;text-align:center;"></span>
+    </span>
+    <span>Despachos</span>
+  </button>
+  <button class="mbn-item" data-page="comunicados">
+    <span style="position:relative;display:inline-block;">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <span id="nb-comms-mobile" style="display:none;position:absolute;top:-4px;right:-6px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:var(--red);color:#fff;font-size:9px;font-weight:700;line-height:15px;text-align:center;"></span>
+    </span>
+    <span>Comunicados</span>
+  </button>
+  <button class="mbn-item" data-page="voluntarios">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+    <span>Usuarios</span>
+  </button>
+</nav>
+
+<div class="modal-ov" id="m-comm">
+  <div class="modal">
+    <div class="modal-h">
+      <div class="modal-title">Nuevo Comunicado</div>
+      <div class="modal-x" data-close="m-comm">×</div>
+    </div>
+    <div class="form-g"><label class="form-l">Título *</label>
+      <input class="form-i" id="ct" placeholder="ej. Se necesitan mantas con urgencia" maxlength="120"></div>
+    <div class="form-g"><label class="form-l">Nivel de urgencia</label>
+      <select class="form-i" id="cu">
+        <option value="info">Informativo — aviso general</option>
+        <option value="urgente">Urgente — se necesita pronto</option>
+        <option value="critico">Crítico — necesidad inmediata</option>
+      </select></div>
+    <div class="form-g"><label class="form-l">Mensaje *</label>
+      <textarea class="form-i" id="cb" placeholder="Qué se necesita, en qué cantidad, dónde entregar…"></textarea></div>
+    <div class="form-g" id="cs-row" style="display:none">
+      <label class="form-l">Alcance (solo admin)</label>
+      <select class="form-i" id="cs">
+        <option value="general">General — se ve en los 3 sistemas</option>
+        <option value="recepcion">Recepción — solo AcopioUCV</option>
+        <option value="sala_situacional">Sala Situacional — solo UCVComandas</option>
+        <option value="toldos">Toldos — solo UCVInventario</option>
+      </select>
+    </div>
+    <div class="form-g"><label class="form-l">Publicado por</label>
+      <input class="form-i" id="ca" readonly style="background:var(--s2);color:var(--t3)"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="m-comm">Cancelar</button>
+      <button class="btn btn-amber" data-action="save-comm">Publicar comunicado</button>
+    </div>
+  </div>
+</div>
+
+</div> <!-- Cierre de #app-shell -->
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
