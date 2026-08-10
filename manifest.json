@@ -1,6 +1,6 @@
 {
-  "name": "Inventario UCV — Conteo Físico",
-  "short_name": "Inventario UCV",
+  "name": "GBSInventario — Conteo Físico",
+  "short_name": "GBSInventario",
   "description": "Conteo físico real de los insumos del centro de acopio de la UCV.",
   "start_url": "./index.html",
   "display": "standalone",

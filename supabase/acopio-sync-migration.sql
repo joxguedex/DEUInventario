@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Migración a arquitectura AcopioUCV
+-- GBSInventario · Migración a arquitectura AcopioUCV
 -- ============================================================
 -- Este script adapta la tabla products para que su campo
 -- updated_at cambie automáticamente cada vez que el stock

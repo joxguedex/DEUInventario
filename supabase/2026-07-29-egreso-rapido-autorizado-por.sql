@@ -1,7 +1,7 @@
 -- ============================================================
 -- ⚠️  EJECUTAR EN Supabase → SQL Editor → pegar TODO → Run
 -- ============================================================
--- Para: que la comanda que genera un Egreso Rápido (UCVInventario,
+-- Para: que la comanda que genera un Egreso Rápido (GBSInventario,
 -- origen='rapida') llegue con "Autorizado por" lleno en vez de vacío
 -- (hoy la Bitácora muestra "sin especificar" porque create_comanda_rapida
 -- no toca esa columna).

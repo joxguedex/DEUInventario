@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Esquema UNIFICADO (BD fundacional)
+-- GBSInventario · Esquema UNIFICADO (BD fundacional)
 -- ------------------------------------------------------------
 -- Esta base la "arranca" el inventario: aquí se cuentan los
 -- items reales. Después acopio usa esta misma BD y se conectan

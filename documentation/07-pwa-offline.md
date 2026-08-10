@@ -4,7 +4,7 @@
 
 Manifest estándar de PWA instalable:
 
-- `name` / `short_name`: "Inventario UCV — Conteo Físico" / "Inventario UCV".
+- `name` / `short_name`: "GBSInventario — Conteo Físico" / "GBSInventario".
 - `start_url`: `./index.html`, `display: standalone` (se abre sin chrome de
   navegador al instalarse).
 - `background_color` / `theme_color`: `#F7F5F2` / `#111827` (coherente con

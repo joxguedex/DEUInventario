@@ -1,25 +1,22 @@
-// ── Login (CI + contraseña) + panel de coordinador/admin ──
-// Botón "Coordinador": si hay sesión abre el panel (respaldos); el login ya
-// no es Supabase Auth sino person_login (ver auth.js). Solo llegan aquí
-// admin y coordinador con acceso a esta plataforma — checkAuth() en app.js
-// ya filtró el resto antes de mostrar el app-shell.
+// ── Login (correo + contraseña, Supabase Auth) + panel de coordinador/admin ──
+// Botón "Coordinador": si hay sesión abre el panel (respaldos). Solo llegan
+// aquí admin y coordinador con acceso a esta plataforma — checkAuth() en
+// app.js ya filtró el resto antes de mostrar el app-shell.
 
-import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA }   from '../env-config.js';
 import { auth }        from '../auth.js';
+import { store }       from '../store.js';
 import { checkpoints } from '../checkpoints.js';
 import { escHtml }     from '../helpers.js';
 import { toast }       from '../components/toast.js';
 
 function _headers(extra = {}) {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
+  return auth.authHeaders({
     'Accept-Profile': DB_SCHEMA,
     'Content-Profile': DB_SCHEMA,
     ...extra,
-  };
+  });
 }
 
 async function _rpc(name, body) {
@@ -86,8 +83,8 @@ export function renderLoginWall(container) {
       </div>
       ${auth.enabled ? '' : `<div class="adm-warn">La base de datos aún no está conectada. El inicio de sesión se activará al configurarla.</div>`}
       <div class="adm-field">
-        <label>Cédula</label>
-        <input id="adm-ci" type="number" inputmode="numeric" autocomplete="username" placeholder="Ej. 12345678" ${auth.enabled ? '' : 'disabled'}>
+        <label>Correo electrónico</label>
+        <input id="adm-email" type="email" autocomplete="username" placeholder="tucorreo@ejemplo.com" ${auth.enabled ? '' : 'disabled'}>
       </div>
       <div class="adm-field">
         <label>Contraseña</label>
@@ -98,17 +95,17 @@ export function renderLoginWall(container) {
       <div class="adm-note">Solo administradores y coordinadores tienen acceso a Inventario.</div>
     </div>`;
 
-  const ci   = container.querySelector('#adm-ci');
+  const email = container.querySelector('#adm-email');
   const pass = container.querySelector('#adm-pass');
   const err  = container.querySelector('#adm-err');
   const btn  = container.querySelector('#adm-login');
 
-  setTimeout(() => ci?.focus(), 100);
+  setTimeout(() => email?.focus(), 100);
 
   const submit = async () => {
     err.textContent = '';
     btn.disabled = true; btn.textContent = 'Entrando…';
-    const r = await auth.login(ci.value, pass.value);
+    const r = await auth.login(email.value, pass.value);
     if (r.ok) {
       toast.ok('Sesión iniciada.');
       renderAuthButton();
@@ -121,7 +118,7 @@ export function renderLoginWall(container) {
   };
   btn?.addEventListener('click', submit);
   pass?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-  ci?.addEventListener('keydown', e => { if (e.key === 'Enter') pass?.focus(); });
+  email?.addEventListener('keydown', e => { if (e.key === 'Enter') pass?.focus(); });
 }
 
 // ── Panel de usuario (admin y coordinador) ──
@@ -183,10 +180,6 @@ async function openPanel() {
           <span class="adm-sec-title">Cambiar contraseña</span>
         </div>
         <form id="adm-pass-form" style="display:flex; flex-direction:column; gap:12px;">
-          <div class="adm-field">
-            <label>Contraseña actual</label>
-            <input type="password" id="adm-pass-actual" required autocomplete="current-password" placeholder="••••••••">
-          </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <div class="adm-field" style="flex:1; min-width:140px;">
               <label>Contraseña nueva</label>
@@ -205,6 +198,18 @@ async function openPanel() {
       ${auth.isAdmin() ? `
       <div class="adm-sec">
         <div class="adm-sec-top">
+          <span class="adm-sec-title">Categorías de insumos</span>
+        </div>
+        <div class="adm-note" style="margin:0 0 10px;">Cada categoría es el "área" que puede tener un coordinador. Borrar una le quita el acceso a sus coordinadores de inmediato (quedan sin rol asignado, sin perder su registro).</div>
+        <div class="adm-cp-list" id="adm-cat-list"></div>
+        <form id="adm-cat-form" style="display:flex; gap:8px; margin-top:10px;">
+          <input class="adm-field" style="flex:1; margin:0;" id="adm-cat-nombre" placeholder="Nombre de la categoría nueva" maxlength="100">
+          <button type="submit" class="adm-mini">+ Agregar</button>
+        </form>
+      </div>
+
+      <div class="adm-sec">
+        <div class="adm-sec-top">
           <span class="adm-sec-title">Respaldos del conteo</span>
           <button class="adm-mini" id="adm-cp-new">+ Crear respaldo</button>
         </div>
@@ -214,7 +219,7 @@ async function openPanel() {
       <button class="adm-btn" id="adm-logout">Cerrar sesión</button>
     </div>`);
 
-  if (auth.isAdmin()) _paintCpList(ov);
+  if (auth.isAdmin()) { _paintCpList(ov); _wireCategorias(ov); }
   _cargarPerfil(ov);
 
   ov.querySelector('#adm-prof-form').addEventListener('submit', _guardarPerfil);
@@ -230,34 +235,20 @@ async function openPanel() {
   });
 }
 
-// Precarga nombre/apellido (de la sesión) y teléfono (de la BD — no viaja en
-// la sesión de person_login) para que el formulario no arranque vacío.
-// Vía RPC (get_own_phone, supabase-migrations/21-fix-mi-perfil-rpc-*.sql):
-// persons/phones tienen RLS activa igual que el resto del esquema (hallazgo
-// 2026-07-28, ver 08-base-de-datos-PENDIENTE.md), un GET REST directo con
-// la anon key no garantiza ver la fila.
+// Precarga nombre/apellido/teléfono desde auth.session — ya no hace falta
+// una RPC aparte (get_own_phone se retiró): _applySession() en auth.js ya
+// resuelve el teléfono junto con el resto del perfil al iniciar sesión.
 async function _cargarPerfil(ov) {
   ov.querySelector('#adm-prof-nombre').value = auth.session?.name || '';
   ov.querySelector('#adm-prof-apellido').value = auth.session?.surname || '';
-  try {
-    const rows = await _rpc('get_own_phone', { p_actor_ci: auth.ci() });
-    const phone = rows?.[0];
-    if (phone?.company_code && phone?.number) {
-      ov.querySelector('#adm-prof-cod').value = phone.company_code;
-      ov.querySelector('#adm-prof-telf').value = phone.number;
-    }
-  } catch { /* el formulario simplemente arranca sin teléfono precargado */ }
+  if (auth.session?.phone_company_code) ov.querySelector('#adm-prof-cod').value = auth.session.phone_company_code;
+  if (auth.session?.phone_number) ov.querySelector('#adm-prof-telf').value = auth.session.phone_number;
 }
 
-// Vía RPC (update_own_profile, supabase-migrations/21-fix-mi-perfil-rpc-
-// 2026-07-28.sql) — antes escribía REST directo contra persons/phones
-// asumiendo RLS deshabilitada ahí (mismo criterio que products); ese
-// supuesto resultó falso (RLS está activa en TODAS las tablas de este
-// esquema, hallazgo 2026-07-28) así que el PATCH/POST directo no garantizaba
-// funcionar. update_own_profile es autoservicio (el actor solo toca su
-// propia fila) — distinto de admin_update_user_profile
-// (20-area-general-y-edicion-usuarios-2026-07-28.sql), que edita a OTRO
-// usuario desde el hub de Usuarios.
+// Vía RPC update_own_profile (autoservicio: el actor sale de auth.uid() del
+// lado del servidor, ya no de un p_actor_ci mandado por el cliente — ver
+// supabase/new-project-schema.sql §8) — distinto de un eventual "editar a
+// OTRO usuario", que vive en la Edge Function (manage-users), no acá.
 async function _guardarPerfil(e) {
   e.preventDefault();
   const ov = e.target.closest('.adm-box');
@@ -276,11 +267,11 @@ async function _guardarPerfil(e) {
   btn.disabled = true; btn.textContent = 'Guardando…';
   try {
     await _rpc('update_own_profile', {
-      p_actor_ci: auth.ci(), p_name: nombre, p_surname: apellido,
+      p_name: nombre, p_surname: apellido,
       p_phone_company_code: cod, p_phone_number: telf,
     });
 
-    auth.updateProfile({ name: nombre, surname: apellido });
+    auth.updateProfile({ name: nombre, surname: apellido, phone_company_code: cod, phone_number: telf });
     ov.querySelector('.adm-sub').textContent =
       `${nombre} ${apellido} · ${auth.isAdmin() ? 'Administrador' : `Coordinador · ${auth.area() || ''}`}`;
     toast.ok('Perfil actualizado.');
@@ -291,11 +282,11 @@ async function _guardarPerfil(e) {
   }
 }
 
-// Vía RPC (update_own_password, supabase-migrations/14-...), no REST directo
-// como el resto de "Mi perfil": person_credentials tiene RLS activa (a
-// diferencia de persons/phones) y exige la contraseña ACTUAL del lado del
-// servidor — sin eso, cualquiera que supiera la cédula de otro (no es un
-// dato secreto) podría cambiarle la contraseña y quitarle la cuenta.
+// Vía Supabase Auth (auth.updateUser en auth.js#updatePassword) — ya no hay
+// RPC update_own_password ni campo "contraseña actual": una sesión válida
+// ya demuestra quién sos, autenticarse de nuevo para cambiar la contraseña
+// sería redundante (a diferencia del modelo viejo sin JWT, donde la RPC era
+// el único punto de verificación real).
 async function _cambiarPassword(e) {
   e.preventDefault();
   const ov = e.target.closest('.adm-box');
@@ -303,7 +294,6 @@ async function _cambiarPassword(e) {
   const err = ov.querySelector('#adm-pass-err');
   err.textContent = '';
 
-  const actual = ov.querySelector('#adm-pass-actual').value;
   const nueva  = ov.querySelector('#adm-pass-nueva').value;
   const nueva2 = ov.querySelector('#adm-pass-nueva2').value;
 
@@ -312,9 +302,7 @@ async function _cambiarPassword(e) {
 
   btn.disabled = true; btn.textContent = 'Cambiando…';
   try {
-    await _rpc('update_own_password', {
-      p_actor_ci: auth.ci(), p_current_password: actual, p_new_password: nueva,
-    });
+    await auth.updatePassword(nueva);
     toast.ok('Contraseña actualizada.');
     ov.querySelector('#adm-pass-form').reset();
   } catch (ex) {
@@ -322,6 +310,71 @@ async function _cambiarPassword(e) {
   } finally {
     btn.disabled = false; btn.textContent = 'Cambiar contraseña';
   }
+}
+
+// ── Categorías (admin-only, ver update_product_category/create_category/
+// update_category/delete_category en supabase/new-project-schema.sql §8b) ──
+async function _wireCategorias(ov) {
+  await store.loadCategories();
+  _paintCatList(ov);
+
+  ov.querySelector('#adm-cat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const inp = ov.querySelector('#adm-cat-nombre');
+    const nombre = inp.value.trim();
+    if (!nombre) return;
+    try {
+      await store.createCategory(nombre);
+      inp.value = '';
+      _paintCatList(ov);
+      toast.ok('Categoría creada.');
+    } catch (ex) {
+      toast.err(ex.message || 'No se pudo crear la categoría.');
+    }
+  });
+}
+
+function _paintCatList(ov) {
+  const box = ov.querySelector('#adm-cat-list');
+  if (!box) return;
+  if (!store.categories.length) { box.innerHTML = `<div class="adm-cp-empty">Sin categorías todavía — crea la primera abajo.</div>`; return; }
+
+  const cats = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  box.innerHTML = cats.map(c => `
+    <div class="adm-cp" data-id="${c.id}">
+      <div class="adm-cp-info">
+        <div class="adm-cp-date" id="cat-label-${c.id}">${escHtml(c.nombre)}</div>
+      </div>
+      <button class="adm-mini" data-rename="${c.id}">Renombrar</button>
+      <button class="adm-mini adm-mini-x" data-del="${c.id}">×</button>
+    </div>`).join('');
+
+  box.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', async () => {
+    const c = store.categories.find(x => String(x.id) === b.dataset.rename);
+    const nuevo = prompt('Nuevo nombre de la categoría:', c?.nombre || '');
+    if (nuevo == null) return;
+    const val = nuevo.trim();
+    if (!val || val === c.nombre) return;
+    try {
+      await store.renameCategory(c.id, val);
+      _paintCatList(ov);
+      toast.ok('Categoría renombrada.');
+    } catch (ex) {
+      toast.err(ex.message || 'No se pudo renombrar la categoría.');
+    }
+  }));
+
+  box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+    const c = store.categories.find(x => String(x.id) === b.dataset.del);
+    if (!confirm(`¿Eliminar la categoría "${c?.nombre}"? Si tiene insumos asignados, se rechazará — reasígnalos primero. Cualquier coordinador de esta categoría queda sin acceso al sistema de inmediato.`)) return;
+    try {
+      await store.deleteCategory(c.id);
+      _paintCatList(ov);
+      toast.ok('Categoría eliminada.');
+    } catch (ex) {
+      toast.err(ex.message || 'No se pudo eliminar la categoría.');
+    }
+  }));
 }
 
 function _paintCpList(ov) {

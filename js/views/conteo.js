@@ -20,7 +20,12 @@ import { auth } from '../auth.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
 
-const CAT_ORDER = ['alimentos_no_perecederos','alimentos','higiene_personal','snacks','alimentos_bebe','limpieza','panales_higiene_ninos','hidratacion','veterinaria','herramientas','ropa_descanso','medicina','papeleria'];
+// Orden de despliegue de categorías: alfabético por nombre — ya no hay un
+// orden fijo hardcodeado (las categorías las crea el admin en vivo, ver
+// views/admin.js). Se recalcula en cada renderList() contra store.categories.
+function _catOrder() {
+  return [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => String(c.id));
+}
 
 let _filter   = 'todos';
 let _query    = '';
@@ -111,8 +116,9 @@ export function renderList() {
     if (!_matches(it)) continue;
     (groups[it.categoria] ||= []).push(it);
   }
-  const cats = CAT_ORDER.filter(c => groups[c]?.length)
-    .concat(Object.keys(groups).filter(c => !CAT_ORDER.includes(c)));
+  const order = _catOrder();
+  const cats = order.filter(c => groups[c]?.length)
+    .concat(Object.keys(groups).filter(c => !order.includes(c)));
 
   if (!cats.length) { list.innerHTML = `<div class="cnt-empty">Sin resultados.</div>`; return; }
 
@@ -203,6 +209,7 @@ function _itemHTML(it) {
           <button class="cnt-step" data-step="1" tabindex="-1">+</button>
         </div>
         <button class="cnt-row-rename">Renombrar</button>
+        ${auth.isAdmin() ? '<button class="cnt-row-recat">Cambiar categoría</button>' : ''}
         <button class="cnt-row-delete">Eliminar insumo</button>
       </div>
     </div>`;
@@ -256,7 +263,7 @@ async function _saveRow(wrap) {
 function _updateBadge(sec) {
   if (!sec) return;
   const cat = sec.dataset.cat;
-  const items = store.visibleItems().filter(i => i.categoria === cat && !i.deleted_at);
+  const items = store.visibleItems().filter(i => String(i.categoria) === String(cat) && !i.deleted_at);
   const badge = sec.querySelector('.cnt-cat-badge');
   if (badge) badge.textContent = `${items.filter(i => i.contado).length}/${items.length}`;
 }
@@ -301,6 +308,13 @@ function _onClick(e) {
   if (renBtn) {
     const wrap = renBtn.closest('.cnt-item');
     _openRename(wrap.dataset.id);
+    return;
+  }
+
+  const recatBtn = e.target.closest('.cnt-row-recat');
+  if (recatBtn) {
+    const wrap = recatBtn.closest('.cnt-item');
+    _openRecat(wrap.dataset.id);
     return;
   }
 
@@ -457,4 +471,52 @@ function _openRename(id) {
 
   _paintSave();
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
+}
+
+// ── Modal "Cambiar categoría" (admin-only) ──────────────────────────────
+// Reasignar la categoría de un producto es exclusivo del admin (a
+// diferencia de crear/editar/eliminar insumos, que también puede un
+// coordinador dentro de su propia categoría) — ver update_product_category
+// en supabase/new-project-schema.sql §8b. El botón que abre esto ya está
+// oculto para no-admin (_itemHTML), esto es respaldo defensivo: la RPC en
+// sí también rechaza a cualquiera que no sea admin.
+function _openRecat(id) {
+  const it = store.find(id);
+  if (!it || !auth.isAdmin()) return;
+
+  const ov = _renModal(`
+    <div class="adm-box">
+      <div class="adm-head">
+        <div>
+          <div class="adm-title">Cambiar categoría</div>
+          <div class="adm-sub">${escHtml(it.nombre)}</div>
+        </div>
+        <button class="adm-x" data-close>&times;</button>
+      </div>
+      <div class="adm-field">
+        <label>Categoría nueva</label>
+        <select id="recat-sel" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
+          ${[...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+            .map(c => `<option value="${c.id}" ${String(c.id) === String(it.categoria) ? 'selected' : ''}>${escHtml(c.nombre)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="adm-err" id="recat-err"></div>
+      <button class="adm-btn adm-btn-primary" id="recat-save">Guardar</button>
+    </div>`);
+
+  const sel = ov.querySelector('#recat-sel');
+  const err = ov.querySelector('#recat-err');
+  ov.querySelector('#recat-save').addEventListener('click', async () => {
+    err.textContent = '';
+    const nuevaCat = sel.value;
+    if (String(nuevaCat) === String(it.categoria)) { _closeRen(); return; }
+    try {
+      await store.setProductCategory(it.id, nuevaCat);
+      _closeRen();
+      renderList();
+      toast.ok('Categoría actualizada.');
+    } catch (ex) {
+      err.textContent = ex.message || 'No se pudo cambiar la categoría.';
+    }
+  });
 }

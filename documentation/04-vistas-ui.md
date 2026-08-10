@@ -220,7 +220,7 @@ Cada ítem de una comanda de UCVComandas (origen `manual`/`personal` — Entrega
 Rápida nunca genera despachos, se entrega en mano en el momento de la carga)
 es un despacho pendiente hasta que el coordinador cuya `area`
 (`person_credentials.area`) coincide con la categoría del producto
-(`products.type`) lo confirma. UCVInventario **nunca llama al backend de
+(`products.type`) lo confirma. GBSInventario **nunca llama al backend de
 UCVComandas** — ambos sistemas solo comparten la base Postgres — así que esta
 vista pega directo contra 2 RPC `SECURITY DEFINER` nuevas (`new_schema_archive`,
 ver `supabase-migrations/12-rpc-despachos-2026-07-24.sql` en la carpeta

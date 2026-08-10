@@ -10,11 +10,18 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, normSearch, catIcon, catLabel, catColor, CATS } from '../helpers.js';
+import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
 
-const CAT_ORDER = ['alimentos_no_perecederos','alimentos','higiene_personal','snacks','alimentos_bebe','limpieza','panales_higiene_ninos','hidratacion','veterinaria','herramientas','ropa_descanso','medicina','papeleria'];
 const UNIDADES  = ['und','paquetes','cajas','bolsas','litros','kg','piezas'];
+
+// Categorías disponibles para el <select> de "crear insumo nuevo": todas
+// (admin) o solo la propia (coordinador) — ordenadas por nombre, ya no hay
+// un orden fijo (ver views/admin.js, categorías dinámicas).
+function _catOptions() {
+  const all = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  return auth.isCoordinador() ? all.filter(c => String(c.id) === String(auth.area())) : all;
+}
 
 let _host = null;
 let _onAdded = null;
@@ -107,7 +114,7 @@ function _body() {
         <input class="qa-new-name" id="qa-new-name" placeholder="Nombre del insumo…" maxlength="80" value="${escHtml(_new.nombre || '')}">
         <div class="qa-new-row">
           <select class="qa-new-sel" id="qa-new-cat" ${auth.isCoordinador() ? 'disabled' : ''}>
-            ${(auth.isCoordinador() ? [auth.area()] : CAT_ORDER).map(c => `<option value="${c}">${catLabel(c)}</option>`).join('')}
+            ${_catOptions().map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
           </select>
           <select class="qa-new-sel" id="qa-new-unit">
             ${UNIDADES.map(u => `<option value="${u}">${u}</option>`).join('')}

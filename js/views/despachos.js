@@ -1,32 +1,24 @@
-// ── Pestaña Despachos (coordinadores de área) ─────────────
-// Cada comanda operativa de UCVComandas (origen manual/personal) genera un
-// "despacho" por cada uno de sus ítems, filtrado por la categoría del
-// producto (`products.type`) — el coordinador cuya área coincide con esa
-// categoría debe confirmar la entrega de cada ítem antes de que la comanda
-// pueda completarse (ver documentation del plan, "flujo de despachos por
-// área"). Esta app no llama al backend de UCVComandas — ambos sistemas
-// comparten la misma base Postgres — así que esto pega directo contra las
-// RPC `list_despachos_pendientes`/`marcar_despacho_entregado`
-// (new_schema_archive, ver ../../../supabase-migrations/12-rpc-despachos-*.sql
-// en la carpeta hermana a los 3 repos), mismo patrón que voluntarios.js.
+// ── Pestaña Despachos (coordinadores de categoría) ────────
+// Cada comanda de Egreso Rápido (views/egresorapido.js#create_comanda_rapida)
+// genera un "despacho" por cada uno de sus ítems, filtrado por la categoría
+// del producto — el coordinador cuya categoría coincide debe confirmar la
+// entrega de cada ítem antes de que la comanda pueda completarse. Pega
+// directo contra `list_despachos_pendientes`/`marcar_despacho_entregado`
+// (supabase/new-project-schema.sql §10).
 //
-// Admin ve los despachos de cualquier área; coordinador solo los de la suya
-// (person_credentials.area) — la RPC ya resuelve ese alcance del lado del
-// servidor, acá no hace falta filtrar de nuevo.
+// Admin (y el coordinador de área 'general') ve los despachos de cualquier
+// categoría; un coordinador de categoría real solo los de la suya — la RPC
+// ya resuelve ese alcance del lado del servidor vía can_access_category(),
+// acá no hace falta filtrar de nuevo.
 
-import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
-import { escHtml } from '../helpers.js';
+import { escHtml, catLabel } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { auth } from '../auth.js';
 
 function _headers() {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
-    'Content-Profile': DB_SCHEMA,
-  };
+  return auth.authHeaders({ 'Content-Profile': DB_SCHEMA });
 }
 
 async function _rpc(name, body) {
@@ -39,10 +31,6 @@ async function _rpc(name, body) {
     throw new Error(msg);
   }
   return data;
-}
-
-function _cap(s) {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 function _fmtFecha(iso) {
@@ -63,7 +51,7 @@ export function renderDespachos(hostEl) {
     // 05-autenticacion.md) — las RPC list_despachos_pendientes/
     // marcar_despacho_entregado ya le dan ese mismo alcance del lado del
     // servidor (ver supabase-migrations), acá solo se refleja en el rótulo.
-    const subt = (isAdmin || auth.isGeneral()) ? 'Todas las áreas' : `Área: ${escHtml(auth.area() || '—')}`;
+    const subt = (isAdmin || auth.isGeneral()) ? 'Todas las áreas' : `Área: ${escHtml(catLabel(auth.area()))}`;
     container.innerHTML = `
       <div class="reg-wrap">
         <div class="cnt-topcard">
@@ -105,7 +93,7 @@ function _renderRows(data) {
           <span class="dsp-qty">Cant.: ${escHtml(String(d.cantidad ?? ''))} ${escHtml(d.unidad || '')}</span>
         </div>
         <div class="dsp-meta">
-          <span class="dsp-badge">${escHtml(_cap(d.categoria))}</span>
+          <span class="dsp-badge">${escHtml(catLabel(d.category_id))}</span>
           <span class="dsp-sub">${escHtml(d.solicitante)} · ${escHtml(_fmtFecha(d.solicitado_en))}</span>
         </div>
       </div>
@@ -125,7 +113,7 @@ async function loadDespachos() {
   const listEl = container?.querySelector('#dsp-list');
   if (listEl) listEl.innerHTML = `<div class="reg-empty"><span class="reg-empty-t">Cargando despachos...</span></div>`;
   try {
-    const data = await _rpc('list_despachos_pendientes', { p_actor_ci: auth.ci() });
+    const data = await _rpc('list_despachos_pendientes', {});
     _checkNuevos(data);
     _renderRows(data);
   } catch (err) {
@@ -181,7 +169,7 @@ async function _backgroundCheck() {
     return;
   }
   try {
-    const data = await _rpc('list_despachos_pendientes', { p_actor_ci: auth.ci() });
+    const data = await _rpc('list_despachos_pendientes', {});
     _checkNuevos(data);
     _renderRows(data); // no-op si la pestaña nunca se abrió en esta sesión
   } catch {
@@ -201,7 +189,7 @@ async function _entregar(btn) {
   btn.disabled = true;
   btn.textContent = 'Entregando...';
   try {
-    await _rpc('marcar_despacho_entregado', { p_actor_ci: auth.ci(), p_item_id: itemId });
+    await _rpc('marcar_despacho_entregado', { p_item_id: itemId });
     toast.ok('Ítem despachado.');
     await loadDespachos();
   } catch (err) {

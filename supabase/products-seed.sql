@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Carga inicial de products (BD fundacional)
+-- GBSInventario · Carga inicial de products (BD fundacional)
 -- ------------------------------------------------------------
 -- 1674 insumos del catalogo de acopio. El peso/volumen/medida
 -- va incluido DENTRO del nombre del producto (ej: 'Arroz 1 kg',

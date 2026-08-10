@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Activar la sincronización en vivo
+-- GBSInventario · Activar la sincronización en vivo
 -- ------------------------------------------------------------
 -- Ejecutar UNA VEZ en Supabase → SQL Editor, después de
 -- supabase-setup.sql y acopio-sync-migration.sql.

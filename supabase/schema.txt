@@ -4,25 +4,27 @@
 CREATE TABLE new_schema_archive.products (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
   name text NOT NULL CHECK (char_length(TRIM(BOTH FROM name)) > 0 AND char_length(name) <= 200),
-  type USER-DEFINED NOT NULL DEFAULT 'otros'::new_schema_archive.product_type,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   umbral integer NOT NULL DEFAULT 10 CHECK (umbral >= 0),
   client_id text NOT NULL UNIQUE,
   deleted_at timestamp with time zone,
-  unidad text NOT NULL DEFAULT 'und',
+  unidad text NOT NULL DEFAULT 'und'::text,
+  type USER-DEFINED NOT NULL,
   CONSTRAINT products_pkey PRIMARY KEY (id)
 );
 CREATE TABLE new_schema_archive.inventory (
   product_id bigint NOT NULL,
   qnty integer NOT NULL DEFAULT 0 CHECK (qnty >= 0),
+  last_counted_at timestamp with time zone,
+  last_counted_by text,
   CONSTRAINT inventory_pkey PRIMARY KEY (product_id),
   CONSTRAINT inventory_product_id_fkey FOREIGN KEY (product_id) REFERENCES new_schema_archive.products(id)
 );
 CREATE TABLE new_schema_archive.phones (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  company_code text NOT NULL CHECK (company_code ~ '^(0412|0414|0416|0424|0426|02[0-9]{2})$'::text),
+  company_code text NOT NULL CHECK (company_code ~ '^(0412|0414|0416|0422|0424|0426|02[0-9]{2})$'::text),
   number text NOT NULL CHECK (number ~ '^[0-9]{7}$'::text),
   CONSTRAINT phones_pkey PRIMARY KEY (id)
 );
@@ -95,6 +97,7 @@ CREATE TABLE new_schema_archive.comms (
   fecha bigint NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  alcance text NOT NULL DEFAULT 'general'::text CHECK (alcance = ANY (ARRAY['general'::text, 'recepcion'::text, 'sala_situacional'::text, 'toldos'::text])),
   CONSTRAINT comms_pkey PRIMARY KEY (id)
 );
 CREATE TABLE new_schema_archive.comandas_viejas (
@@ -128,8 +131,15 @@ CREATE TABLE new_schema_archive.comanda_items (
   confianza_pct integer,
   producto_id bigint,
   comanda_id integer NOT NULL,
+  movement_item_id bigint,
+  despachado boolean NOT NULL DEFAULT false,
+  despachado_por_ci bigint,
+  despachado_por character varying,
+  despachado_at timestamp with time zone,
   CONSTRAINT comanda_items_pkey PRIMARY KEY (id),
   CONSTRAINT fk_comanda_items_producto FOREIGN KEY (producto_id) REFERENCES new_schema_archive.products(id),
+  CONSTRAINT fk_comanda_items_movement_item_id FOREIGN KEY (movement_item_id) REFERENCES new_schema_archive.movement_items(id),
+  CONSTRAINT fk_comanda_items_despachado_por_ci FOREIGN KEY (despachado_por_ci) REFERENCES new_schema_archive.persons(ci),
   CONSTRAINT fk_comanda FOREIGN KEY (comanda_id) REFERENCES new_schema_archive.comandas(id)
 );
 CREATE TABLE new_schema_archive.alembic_version (
@@ -142,16 +152,20 @@ CREATE TABLE new_schema_archive.person_credentials (
   role USER-DEFINED NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone,
+  area text,
   CONSTRAINT person_credentials_pkey PRIMARY KEY (ci),
   CONSTRAINT person_credentials_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
 );
 CREATE TABLE new_schema_archive.ucevistas (
   ci bigint NOT NULL,
-  carrera character varying NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone,
+  facultad_id bigint,
+  carrera_id bigint,
   CONSTRAINT ucevistas_pkey PRIMARY KEY (ci),
-  CONSTRAINT ucevistas_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
+  CONSTRAINT ucevistas_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci),
+  CONSTRAINT ucevistas_facultad_id_fkey FOREIGN KEY (facultad_id) REFERENCES new_schema_archive.facultades(id),
+  CONSTRAINT ucevistas_carrera_id_fkey FOREIGN KEY (carrera_id) REFERENCES new_schema_archive.carreras(id)
 );
 CREATE TABLE new_schema_archive.municipios (
   id smallint GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -204,6 +218,8 @@ CREATE TABLE new_schema_archive.ubicaciones (
   beneficiarios_hombres integer CHECK (beneficiarios_hombres IS NULL OR beneficiarios_hombres >= 0),
   beneficiarios_mujeres integer CHECK (beneficiarios_mujeres IS NULL OR beneficiarios_mujeres >= 0),
   beneficiarios_adultos_mayores integer CHECK (beneficiarios_adultos_mayores IS NULL OR beneficiarios_adultos_mayores >= 0),
+  beneficiarios_total integer CHECK (beneficiarios_total IS NULL OR beneficiarios_total >= 0),
+  dias_sin_atencion_maximo integer,
   CONSTRAINT ubicaciones_pkey PRIMARY KEY (id),
   CONSTRAINT ubicaciones_municipio_fkey FOREIGN KEY (municipio_id) REFERENCES new_schema_archive.municipios(id),
   CONSTRAINT ubicaciones_parroquia_fkey FOREIGN KEY (parroquia_id) REFERENCES new_schema_archive.parroquias(id),
@@ -332,7 +348,14 @@ CREATE TABLE new_schema_archive.comandas (
   beneficiarios_ninos integer CHECK (beneficiarios_ninos IS NULL OR beneficiarios_ninos >= 0),
   beneficiarios_adultos_mayores integer CHECK (beneficiarios_adultos_mayores IS NULL OR beneficiarios_adultos_mayores >= 0),
   beneficiarios_familias integer CHECK (beneficiarios_familias IS NULL OR beneficiarios_familias >= 0),
+  beneficiarios_total integer CHECK (beneficiarios_total IS NULL OR beneficiarios_total >= 0),
+  client_op_id text UNIQUE,
+  movement_id bigint,
+  direccion text,
+  beneficiarios_perros integer CHECK (beneficiarios_perros IS NULL OR beneficiarios_perros >= 0),
+  beneficiarios_gatos integer CHECK (beneficiarios_gatos IS NULL OR beneficiarios_gatos >= 0),
   CONSTRAINT comandas_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_comandas_movement_id FOREIGN KEY (movement_id) REFERENCES new_schema_archive.movements(id),
   CONSTRAINT comandas_comanda_vieja_fkey FOREIGN KEY (comanda_vieja_id) REFERENCES new_schema_archive.comandas_viejas(id),
   CONSTRAINT comandas_solicitante_fkey FOREIGN KEY (solicitante_ci) REFERENCES new_schema_archive.persons(ci),
   CONSTRAINT comandas_estudiante_resp_fkey FOREIGN KEY (estudiante_resp_ci) REFERENCES new_schema_archive.persons(ci),
@@ -342,4 +365,31 @@ CREATE TABLE new_schema_archive.comandas (
   CONSTRAINT comandas_aprobado_por_fkey FOREIGN KEY (aprobado_por_ci) REFERENCES new_schema_archive.persons(ci),
   CONSTRAINT comandas_created_by_fkey FOREIGN KEY (created_by_ci) REFERENCES new_schema_archive.persons(ci),
   CONSTRAINT comandas_last_edited_by_fkey FOREIGN KEY (last_edited_by_ci) REFERENCES new_schema_archive.persons(ci)
+);
+CREATE TABLE new_schema_archive.person_status (
+  ci bigint NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT person_status_pkey PRIMARY KEY (ci),
+  CONSTRAINT person_status_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.person_credentials(ci)
+);
+CREATE TABLE new_schema_archive.facultades (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  nombre character varying NOT NULL UNIQUE,
+  CONSTRAINT facultades_pkey PRIMARY KEY (id)
+);
+CREATE TABLE new_schema_archive.carreras (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  facultad_id bigint NOT NULL,
+  nombre character varying NOT NULL,
+  CONSTRAINT carreras_pkey PRIMARY KEY (id),
+  CONSTRAINT carreras_facultad_id_fkey FOREIGN KEY (facultad_id) REFERENCES new_schema_archive.facultades(id)
+);
+CREATE TABLE new_schema_archive.afectados (
+  ci bigint NOT NULL,
+  informacion_adicional text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone,
+  CONSTRAINT afectados_pkey PRIMARY KEY (ci),
+  CONSTRAINT afectados_ci_fkey FOREIGN KEY (ci) REFERENCES new_schema_archive.persons(ci)
 );

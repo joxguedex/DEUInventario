@@ -1,4 +1,5 @@
 {
+  "name": "GBSInventario",
   "dependencies": {
     "@supabase/supabase-js": "^2.110.1",
     "xlsx": "^0.18.5"

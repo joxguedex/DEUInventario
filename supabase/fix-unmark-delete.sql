@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Arreglo de "desmarcar" y "borrar de la bitácora"
+-- GBSInventario · Arreglo de "desmarcar" y "borrar de la bitácora"
 -- ------------------------------------------------------------
 -- Dos RPC nuevos. Ejecutar en Supabase → SQL Editor.
 --

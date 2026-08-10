@@ -1,7 +1,7 @@
 -- ============================================================
 -- ⚠️  EJECUTAR EN Supabase → SQL Editor → pegar TODO → Run
 -- ============================================================
--- Para: mostrar en la Bitácora de UCVInventario quién autorizó un
+-- Para: mostrar en la Bitácora de GBSInventario quién autorizó un
 -- egreso hecho por comanda (UCVComandas), sin exponer la tabla
 -- `comandas` completa (trae PII: cédulas/teléfonos de solicitante,
 -- estudiante responsable y conductor, texto crudo de OCR, etc.).
@@ -28,4 +28,4 @@ GRANT SELECT ON new_schema_archive.comandas_movement_info TO anon;
 -- "Nombre · Administrador") y viaja directo en movements.note, mismo
 -- patrón que ya usaba UCVAcopio (confirmado leyendo su store.js:
 -- _actorNote()). Ver js/store.js#_conTag y js/views/registro.js en
--- UCVInventario. No hace falta tocar apply_count para esto.
+-- GBSInventario. No hace falta tocar apply_count para esto.

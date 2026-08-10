@@ -30,7 +30,7 @@ const pages = {
 const TITLES = {
   conteo: 'Conteo Físico', registro: 'Bitácora', resumen: 'Resumen del Inventario',
   despachos: 'Despachos Pendientes', comunicados: 'Comunicados y Necesidades',
-  voluntarios: 'Gestión de Usuarios',
+  voluntarios: 'Gestión de Accesos',
 };
 
 let _current = 'conteo';
@@ -52,10 +52,10 @@ async function nav(page) {
 
 function applyRBAC() {
   // Quien llega al app-shell ya pasó el filtro de checkAuth(): solo admin y
-  // coordinador con acceso a esta plataforma (00-plan-general.md §4) llegan
-  // hasta acá, y ambos ven las 4 pestañas completas — voluntarios.js decide
-  // internamente cuánto ve cada rol dentro de esa pestaña (hub completo vs.
-  // solo su área), no hace falta ocultar pestañas por rol.
+  // coordinador con acceso a esta plataforma llegan hasta acá, y ambos ven
+  // las pestañas completas — voluntarios.js decide internamente que
+  // "Gestión de Accesos" es admin-only (un coordinador ve un mensaje en vez
+  // del hub), no hace falta ocultar la pestaña entera por rol.
   document.querySelectorAll('.tn-item, .mbn-item').forEach(el => { el.style.display = ''; });
   const authBtn = document.getElementById('auth-btn');
   const authBtnM = document.getElementById('auth-btn-m');
@@ -129,7 +129,11 @@ export function checkAuth() {
         resetIngresoRapido();
       }
     }
-    if (freshLogin) nav('conteo');
+    // Categorías: store.init() intentó cargarlas antes de que existiera
+    // sesión (RLS exige `to authenticated`, ver supabase/new-project-
+    // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
+    // hay un access_token real.
+    if (freshLogin) { nav('conteo'); store.loadCategories(); }
     applyRBAC();
     // Recalcula qué insumos puede ver esta cuenta (coordinador ↔ su área,
     // ver store.visibleItems()) sin esperar a que el usuario cambie de
@@ -198,7 +202,7 @@ async function boot() {
   document.querySelectorAll('.tn-item, .mbn-item').forEach(n =>
     n.addEventListener('click', () => nav(n.dataset.page)));
 
-  auth.init();
+  await auth.init();
   auth.onChange(checkAuth); // Si cierra sesión, vuelve al login
   // Notificación de despachos nuevos + badge en la pestaña "Despachos":
   // corre en segundo plano sin importar qué página esté activa (ver

@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Inventario UCV — Conteo Físico</title>
+<title>GBSInventario — Conteo Físico</title>
 <meta name="theme-color" content="#111827">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Inventario UCV">
+<meta name="apple-mobile-web-app-title" content="GBSInventario">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
@@ -31,7 +31,7 @@
 
 <!-- ═══ Top nav (desktop) ═══ -->
 <header class="topnav">
-  <div class="tn-brand">Inventario<span>UCV</span> <span id="version-badge" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></div>
+  <div class="tn-brand">GBS<span>Inventario</span> <span id="version-badge" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></div>
   <nav class="tn-nav">
     <button class="tn-item active" data-page="conteo">Conteo físico</button>
     <button class="tn-item" data-page="registro">Bitácora</button>
@@ -61,7 +61,7 @@
 
 <!-- ═══ Topbar (móvil) ═══ -->
 <div class="m-topbar">
-  <span class="m-brand">Inventario<span>UCV</span> <span id="version-badge-m" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></span>
+  <span class="m-brand">GBS<span>Inventario</span> <span id="version-badge-m" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></span>
   <div style="display:flex;align-items:center;gap:8px">
     <button class="push-btn push-btn-m" id="push-btn-m" aria-label="Subir mi conteo">
       <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
@@ -187,15 +187,6 @@
       </select></div>
     <div class="form-g"><label class="form-l">Mensaje *</label>
       <textarea class="form-i" id="cb" placeholder="Qué se necesita, en qué cantidad, dónde entregar…"></textarea></div>
-    <div class="form-g" id="cs-row" style="display:none">
-      <label class="form-l">Alcance (solo admin)</label>
-      <select class="form-i" id="cs">
-        <option value="general">General — se ve en los 3 sistemas</option>
-        <option value="recepcion">Recepción — solo AcopioUCV</option>
-        <option value="sala_situacional">Sala Situacional — solo UCVComandas</option>
-        <option value="toldos">Toldos — solo UCVInventario</option>
-      </select>
-    </div>
     <div class="form-g"><label class="form-l">Publicado por</label>
       <input class="form-i" id="ca" readonly style="background:var(--s2);color:var(--t3)"></div>
     <div class="modal-foot">

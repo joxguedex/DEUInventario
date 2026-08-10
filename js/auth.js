@@ -1,109 +1,190 @@
-// ── Autenticación por CI + contraseña (RPC person_login) ──
-// Login unificado con UCVAcopio/UCVComandas: sin Supabase Auth, sin JWT.
-// La RPC person_login (new_schema_archive) valida el hash bcrypt del lado
-// del servidor y devuelve {ci, role, area, name, surname} directo — nunca
-// hay access_token/refresh_token que renovar (ver 00-plan-general.md §2).
+// ── Autenticación real vía Supabase Auth ──────────────────
+// Reemplaza el login propio (RPC person_login, sin JWT, sesión en
+// localStorage forjable desde la consola) por sesiones reales de Supabase
+// Auth — auth.uid()/auth.jwt() del lado del servidor (RLS y las RPCs de
+// supabase/new-project-schema.sql) dependen de que exista un JWT real, no
+// alcanza con la anon key. Rol/área viven en session.user.app_metadata —
+// SOLO la Admin API los puede escribir (ver supabase/functions/manage-
+// users), nunca el propio usuario ni una RPC alcanzable con la anon key.
+//
+// Login por CORREO (no cédula): decisión explícita — la cédula sigue siendo
+// la clave primaria de `persons` y dato importante del sistema, pero deja
+// de ser parte del inicio de sesión. ci/nombre/apellido/teléfono no viven
+// en el JWT: se resuelven aparte contra `persons` (auth_user_id → ci) justo
+// después de autenticar.
 
 import { SUPABASE_URL, SUPABASE_KEY, SYNC_ENABLED } from './config.js';
-import { DB_SCHEMA } from './env-config.js';
 
-const SKEY = 'ucv-inv-session';
+const PROFILE_CACHE_KEY = 'gbs-inv-profile-cache';
 
-// Roles/áreas con acceso real a esta plataforma (00-plan-general.md §4):
-// admin siempre; coordinador solo si su área NO es una de las otras dos
-// plataformas (recepcion=Acopio, "sala situacional"=Comandas). Voluntario
-// nunca tiene acceso a Inventario, sin importar su área.
-const DENIED_COORD_AREAS = new Set(['recepcion', 'sala situacional']);
+// Un solo cliente Supabase compartido por toda la app (sync.js lo reusa para
+// Realtime, ver sync.js#listenRealtime) — dos instancias independientes
+// significarían dos GoTrue por separado gestionando la misma sesión.
+export const supabaseClient = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY) || null;
+
+function _loadProfileCache() {
+  try { return JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY)) || null; }
+  catch { return null; }
+}
+function _saveProfileCache(p) {
+  try { localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(p)); } catch {}
+}
 
 export const auth = {
-  enabled: SYNC_ENABLED,
-  session: null,          // { ci, role, area, name, surname }
+  enabled: SYNC_ENABLED && !!supabaseClient,
+  session: null,   // { userId, accessToken, email, role, area, ci, name, surname, phone_company_code, phone_number }
   _listeners: [],
 
   onChange(fn) { this._listeners.push(fn); },
   _emit() { this._listeners.forEach(fn => { try { fn(); } catch {} }); },
 
-  init() {
-    try { this.session = JSON.parse(localStorage.getItem(SKEY) || 'null'); }
-    catch { this.session = null; }
+  async init() {
+    if (!this.enabled) return;
+    const { data } = await supabaseClient.auth.getSession();
+    await this._applySession(data?.session ?? null);
+
+    // Cubre login/logout/expiración Y el refresh automático de token de
+    // Supabase (cada ~55min) — sin esto, authHeaders() seguiría mandando un
+    // access_token vencido tras un rato de sesión abierta.
+    supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+      await this._applySession(session);
+      this._emit();
+    });
+  },
+
+  // Resuelve ci/nombre/apellido/teléfono contra `persons` (RLS: cualquier
+  // sesión autenticada puede leer, ver supabase/new-project-schema.sql
+  // §11.4) — no viven en el JWT. Si falla (sin red justo al arrancar), usa
+  // el último perfil conocido en localStorage — mismo criterio local-first
+  // del resto de la app.
+  async _applySession(session) {
+    if (!session) { this.session = null; return; }
+
+    const role = session.user.app_metadata?.role || '';
+    const area = session.user.app_metadata?.area ?? null;
+    let profile = null;
+
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/persons?auth_user_id=eq.${session.user.id}&select=ci,name,surname,phones(company_code,number)`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}` } }
+      );
+      if (res.ok) {
+        const rows = await res.json();
+        const p = Array.isArray(rows) ? rows[0] : null;
+        if (p) {
+          const phone = Array.isArray(p.phones) ? p.phones[0] : p.phones;
+          profile = {
+            ci: p.ci, name: p.name || '', surname: p.surname || '',
+            phone_company_code: phone?.company_code || '', phone_number: phone?.number || '',
+          };
+          _saveProfileCache(profile);
+        }
+      }
+    } catch { /* sin red: cae al cache de abajo */ }
+
+    if (!profile) profile = _loadProfileCache() || { ci: null, name: '', surname: '', phone_company_code: '', phone_number: '' };
+
+    this.session = {
+      userId: session.user.id,
+      accessToken: session.access_token,
+      email: session.user.email,
+      role, area,
+      ...profile,
+    };
   },
 
   isLoggedIn() { return !!this.session; },
   ci()        { return this.session?.ci ?? null; },
   role()      { return this.session?.role || ''; },
-  area()      { return this.session?.area || null; },
+  area()      { return this.session?.area ?? null; },   // id de categoría (string), o 'general'
   name()      { return this.session ? `${this.session.name || ''} ${this.session.surname || ''}`.trim() : ''; },
 
   isAdmin()       { return this.role() === 'admin'; },
   isCoordinador() { return this.role() === 'coordinador'; },
-  // Coordinador del área especial "General": sin ítems propios (no es una
-  // categoría de insumos), consulta el catálogo completo pero no puede
-  // modificarlo — ver store.js#visibleItems() y auth.js#canEditInventory().
+  // Coordinador del área especial "general": sin categoría propia, consulta
+  // el catálogo completo pero no puede modificarlo — ver canEditInventory()
+  // y store.js#visibleItems().
   isGeneral()     { return this.isCoordinador() && this.area() === 'general'; },
-  // ¿Puede sumar/restar/crear/eliminar insumos? admin siempre; coordinador
-  // de cualquier área REAL (una categoría de insumos), pero no el de "General"
-  // (solo consulta + despacho, ver documentation/05-autenticacion.md).
   canEditInventory() { return this.isAdmin() || (this.isCoordinador() && !this.isGeneral()); },
 
-  // ¿Tiene acceso a la plataforma con la sesión actual? admin siempre;
-  // coordinador solo si su área no pertenece a Acopio/Comandas.
-  hasPlatformAccess() {
-    if (!this.session) return false;
-    if (this.isAdmin()) return true;
-    if (this.isCoordinador()) return !DENIED_COORD_AREAS.has(this.area());
-    return false; // voluntario: sin acceso, cualquier área
+  // Ya no hay áreas "denegadas por pertenecer a otro sistema" (GBSInventario
+  // es independiente desde la migración a esquema propio): cualquier sesión
+  // con rol admin/coordinador tiene acceso — ese rol solo lo fija la Edge
+  // Function (manage-users), nunca el propio usuario ni el cliente.
+  hasPlatformAccess() { return this.isAdmin() || this.isCoordinador(); },
+
+  // Headers para requests REST/RPC directos (fetch) del resto de la app —
+  // manda el access_token real de la sesión (para que auth.uid()/auth.jwt()
+  // resuelvan del lado del servidor) y cae a la anon key si no hay sesión
+  // (p.ej. antes de loguear — la mayoría de las tablas igual rechazarán ese
+  // caso, RLS exige `to authenticated`, pero evita mandar un Authorization
+  // vacío/inválido).
+  authHeaders(extra = {}) {
+    return {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${this.session?.accessToken || SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      ...extra,
+    };
   },
 
-  async login(ci, password) {
-    if (!SYNC_ENABLED) return { ok: false, error: 'Conecta la base de datos primero.' };
-    ci = parseInt(ci, 10);
-    if (!ci || !password) return { ok: false, error: 'Escribe cédula y contraseña.' };
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/person_login`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Content-Profile': DB_SCHEMA,
-        },
-        body: JSON.stringify({ p_ci: ci, p_password: password }),
-      });
-      if (!res.ok) return { ok: false, error: 'Sin conexión con el servidor.' };
-      const rows = await res.json().catch(() => []);
-      if (!Array.isArray(rows) || !rows.length) {
-        return { ok: false, error: 'Cédula o contraseña incorrecta.' };
-      }
-      const row = rows[0];
-      if (row.role !== 'admin' && row.role !== 'coordinador') {
-        // voluntario: credenciales válidas, pero esta plataforma no es para su rol.
-        return { ok: false, error: 'No tienes acceso a esta plataforma.' };
-      }
-      if (row.role === 'coordinador' && DENIED_COORD_AREAS.has(row.area)) {
-        return { ok: false, error: 'No tienes acceso a esta plataforma.' };
-      }
-      this.session = { ci: row.ci, role: row.role, area: row.area, name: row.name, surname: row.surname };
-      localStorage.setItem(SKEY, JSON.stringify(this.session));
-      this._emit();
-      return { ok: true };
-    } catch {
-      return { ok: false, error: 'Sin conexión con el servidor.' };
+  async login(email, password) {
+    if (!this.enabled) return { ok: false, error: 'Conecta la base de datos primero.' };
+    email = (email || '').trim();
+    if (!email || !password) return { ok: false, error: 'Escribe correo y contraseña.' };
+
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error || !data?.session) return { ok: false, error: 'Correo o contraseña incorrectos.' };
+
+    await this._applySession(data.session);
+    if (!this.hasPlatformAccess()) {
+      // Login de Supabase válido, pero sin rol asignado (persona sin acceso
+      // — p.ej. rebajada al borrarse su categoría, ver delete_category en
+      // SQL) o rol voluntario (nunca tiene acceso a esta plataforma, ver
+      // supabase/functions/manage-users#grantLogin). No lo dejamos "medio
+      // adentro": se cierra la sesión de Supabase también.
+      await supabaseClient.auth.signOut();
+      this.session = null;
+      return { ok: false, error: 'No tienes acceso a esta plataforma.' };
     }
+    this._emit();
+    return { ok: true };
   },
 
-  signOut() {
+  async signOut() {
+    await supabaseClient?.auth.signOut();
     this.session = null;
-    localStorage.removeItem(SKEY);
     this._emit();
   },
 
-  // Refresca nombre/apellido de la sesión ya iniciada tras editar el perfil
-  // (js/views/admin.js) — evita forzar un re-login solo para que el botón de
-  // cuenta y la atribución de "contado por" reflejen el nombre nuevo.
-  updateProfile({ name, surname }) {
+  // Cambiar la propia contraseña — a diferencia del viejo update_own_password
+  // (RPC, exigía la contraseña actual a mano), auth.updateUser() solo
+  // funciona con una sesión válida ya autenticada: esa sesión YA demuestra
+  // quién es, no hace falta pedir la contraseña vigente de nuevo.
+  async updatePassword(newPassword) {
+    if (!this.session) throw new Error('Sin sesión activa.');
+    const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message || 'No se pudo cambiar la contraseña.');
+  },
+
+  // Refresca el perfil en memoria + cache tras editar "Mi perfil"
+  // (update_own_profile RPC) — evita forzar un re-login solo para que el
+  // botón de cuenta y la atribución de "contado por" reflejen los datos
+  // nuevos.
+  updateProfile({ name, surname, phone_company_code, phone_number }) {
     if (!this.session) return;
-    this.session = { ...this.session, name, surname };
-    localStorage.setItem(SKEY, JSON.stringify(this.session));
+    this.session = {
+      ...this.session,
+      name: name ?? this.session.name,
+      surname: surname ?? this.session.surname,
+      phone_company_code: phone_company_code ?? this.session.phone_company_code,
+      phone_number: phone_number ?? this.session.phone_number,
+    };
+    _saveProfileCache({
+      ci: this.session.ci, name: this.session.name, surname: this.session.surname,
+      phone_company_code: this.session.phone_company_code, phone_number: this.session.phone_number,
+    });
     this._emit();
   },
 };

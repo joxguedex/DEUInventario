@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Corrección de metadatos que no se sincronizan
+-- GBSInventario · Corrección de metadatos que no se sincronizan
 -- ------------------------------------------------------------
 -- Corrige tres pérdidas de datos y prepara la fusión de duplicados.
 -- Ejecutar ANTES de desplegar el código nuevo y ANTES de

@@ -17,14 +17,18 @@
 import { store } from '../store.js';
 import { sync }  from '../sync.js';
 import { auth }  from '../auth.js';
-import { typeToCat } from '../sync.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor, localDate } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { requireCoord } from './admin.js';
-import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
 
-const CAT_ORDER = ['alimentos_no_perecederos','alimentos','higiene_personal','snacks','alimentos_bebe','limpieza','panales_higiene_ninos','hidratacion','veterinaria','herramientas','ropa_descanso','medicina','papeleria'];
+// Orden de categorías: alfabético por nombre, ya no hay un orden fijo (ver
+// conteo.js#_catOrder, mismo criterio — las categorías son dinámicas).
+function _catOrder() {
+  return [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => String(c.id));
+}
+function _catRank(id) { return _catOrder().indexOf(String(id)); }
 
 let _root = null;
 let _tab  = 'general'; // 'general' | 'ingresos' | 'egresos'
@@ -73,7 +77,8 @@ function _renderGeneral(el) {
   const bc = store.statsByCat();
   const pct = s.total ? Math.round(s.contados / s.total * 100) : 0;
 
-  const cats = CAT_ORDER.filter(c => bc[c]).concat(Object.keys(bc).filter(c => !CAT_ORDER.includes(c)));
+  const order = _catOrder();
+  const cats = order.filter(c => bc[c]).concat(Object.keys(bc).filter(c => !order.includes(c)));
 
   el.innerHTML = `
     <div class="rsm-wrap">
@@ -138,7 +143,7 @@ function _export(soloPendientes) {
     .filter(i => !i.deleted_at)
     .filter(i => soloPendientes ? !i.contado : true)
     .sort((a, b) =>
-      (CAT_ORDER.indexOf(a.categoria) - CAT_ORDER.indexOf(b.categoria)) ||
+      (_catRank(a.categoria) - _catRank(b.categoria)) ||
       a.nombre.localeCompare(b.nombre, 'es'))
     .map(i => ({
       'ID':        i.id,
@@ -169,7 +174,7 @@ function _export(soloPendientes) {
 // store.js#_conTag: siempre "Nombre · Área", nunca "· Recepción" — el área
 // "recepcion" está vedada de esta plataforma, ver auth.js).
 
-const _headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Accept-Profile': DB_SCHEMA };
+function _headers() { return auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }); }
 const NOTE_FILTER =
   `or=(note.eq.${encodeURIComponent('Migracion historial ingresos_log')},` +
   `note.like.${encodeURIComponent('*Recepción')})`;
@@ -188,9 +193,9 @@ async function _fetchIngresos() {
   // el límite de PostgREST por página es 1000.
   while (true) {
     const url = `${SUPABASE_URL}/rest/v1/movements?direction=eq.in&${NOTE_FILTER}&id=gt.${cursor}` +
-      `&select=id,occurred_at,note,movement_items(id,qnty,products(client_id,name,type,unidad))` +
+      `&select=id,occurred_at,note,movement_items(id,qnty,products(client_id,name,category_id,unidad))` +
       `&order=id.asc&limit=1000`;
-    const res = await fetch(url, { headers: _headers });
+    const res = await fetch(url, { headers: _headers() });
     if (!res.ok) throw new Error(`http ${res.status}`);
     const rows = await res.json();
     if (!Array.isArray(rows) || !rows.length) break;
@@ -208,7 +213,7 @@ async function _fetchIngresos() {
       out.push({
         item_id:   pr.client_id || pr.name,
         nombre:    pr.name || '(sin nombre)',
-        categoria: typeToCat(pr.type),
+        categoria: pr.category_id,
         unidad:    pr.unidad || 'und',
         cantidad:  Math.abs(mi.qnty) || 0,
         ts:        mv.occurred_at,
@@ -285,7 +290,8 @@ async function _renderIngresos(el) {
       byAreaProducts.get(p.categoria).push({ item_id: key, ...p });
     }
     for (const arr of byAreaProducts.values()) arr.sort((a, b) => b.total - a.total || a.nombre.localeCompare(b.nombre, 'es'));
-    const areas = CAT_ORDER.filter(c => byArea.has(c)).concat([...byArea.keys()].filter(c => !CAT_ORDER.includes(c)));
+    const order = _catOrder();
+    const areas = order.filter(c => byArea.has(c)).concat([...byArea.keys()].filter(c => !order.includes(c)));
     const max = Math.max(1, ...areas.map(c => byArea.get(c)));
     areasHTML = `
       <div class="rsm-ing-section">
@@ -415,7 +421,7 @@ function _exportIngresosProductos(byProduct) {
   if (typeof XLSX === 'undefined') { toast.err('Librería Excel no cargada.'); return; }
   const rows = [...byProduct.values()]
     .sort((a, b) =>
-      (CAT_ORDER.indexOf(a.categoria) - CAT_ORDER.indexOf(b.categoria)) ||
+      (_catRank(a.categoria) - _catRank(b.categoria)) ||
       a.nombre.localeCompare(b.nombre, 'es'))
     .map(p => ({
       'Insumo':    p.nombre,

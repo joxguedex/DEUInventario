@@ -1,4 +1,4 @@
-/* ═══ UCVInventario · tema heredado de AcopioUCV ═══ */
+/* ═══ GBSInventario · tema heredado de AcopioUCV ═══ */
 :root {
   --bg:#F7F5F2; --surface:#FFFFFF; --s2:#F2F0ED;
   --sidebar:#111827; --side2:#0D1520;
@@ -246,9 +246,9 @@ input[type=number]{-moz-appearance:textfield}
 .cnt-step:hover{background:var(--bdr);color:var(--t1)}
 .cnt-qty{width:66px;height:38px;text-align:center;border:1px solid var(--bdr);border-left:none;border-right:none;font-size:15px;font-weight:600;font-family:'JetBrains Mono',monospace;color:var(--t1);background:#fff}
 .cnt-qty:focus{outline:none;background:var(--amber-bg)}
-.cnt-row-rename{flex-shrink:0;padding:9px 14px;border-radius:var(--r-xs);font-size:12.5px;font-weight:600;color:var(--t2);background:#fff;border:1px solid var(--bdr)}
-.cnt-row-rename:hover:not(:disabled){border-color:var(--t4);color:var(--t1)}
-.cnt-row-rename:disabled{opacity:.4}
+.cnt-row-rename,.cnt-row-recat{flex-shrink:0;padding:9px 14px;border-radius:var(--r-xs);font-size:12.5px;font-weight:600;color:var(--t2);background:#fff;border:1px solid var(--bdr)}
+.cnt-row-rename:hover:not(:disabled),.cnt-row-recat:hover:not(:disabled){border-color:var(--t4);color:var(--t1)}
+.cnt-row-rename:disabled,.cnt-row-recat:disabled{opacity:.4}
 .cnt-row-delete{flex-shrink:0;padding:9px 14px;border-radius:var(--r-xs);font-size:12.5px;font-weight:600;color:var(--red);background:var(--red-bg);border:1px solid #FCA5A5}
 .cnt-row-delete:hover:not(:disabled){background:var(--red);color:#fff;border-color:var(--red)}
 .cnt-row-delete:disabled{opacity:.4}
@@ -509,6 +509,7 @@ input[type=number]{-moz-appearance:textfield}
      necesita su propia línea para no quedar cortado */
   .cnt-row-menu{padding:10px 14px 12px;flex-wrap:wrap;gap:10px}
   .cnt-row-rename{flex:1 1 auto;text-align:center}
+  .cnt-row-recat{flex:1 1 auto;text-align:center}
   .cnt-row-delete{flex:1 1 auto;text-align:center}
   .cnt-cat-head{padding:16px}
   .cnt-cat-name{font-size:15.5px}

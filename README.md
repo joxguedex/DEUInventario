@@ -1,4 +1,4 @@
-# Inventario UCV — Conteo Físico test20
+# GBSInventario — Conteo Físico
 
 App **independiente** del sistema AcopioUCV para hacer un **inventario físico real**
 de los insumos del centro de acopio. Nace porque el sistema de acopio tiene
@@ -44,7 +44,7 @@ resultados.
 ## Estructura
 
 ```
-UCVInventario/
+GBSInventario/
 ├── index.html            · shell (sidebar + statusbar + nav móvil)
 ├── manifest.json  sw.js  · PWA / offline
 ├── icon.svg

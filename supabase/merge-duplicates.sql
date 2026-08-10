@@ -1,5 +1,5 @@
 -- ============================================================
--- UCVInventario · Fusión de duplicados y limpieza del catálogo
+-- GBSInventario · Fusión de duplicados y limpieza del catálogo
 -- ------------------------------------------------------------
 -- GENERADO desde un volcado real de products (2026-07-09).
 -- Respaldo: scratchpad/products_backup.json (1715 filas)

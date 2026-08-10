@@ -5,15 +5,14 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { typeToCat } from '../sync.js';
 import { escHtml, catColor, localDate } from '../helpers.js';
 import { toast } from '../components/toast.js';
-import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
 
 let _root = null;
 
-const _headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Accept-Profile': DB_SCHEMA };
+function _headers() { return auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }); }
 
 // Egresos generados por una comanda (UCVComandas, o el Egreso Rápido propio
 // de Inventario) no traen contado_por en movements.note — el dato de "quién"
@@ -27,7 +26,7 @@ async function _fetchComandaInfo(movementIds) {
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/comandas_movement_info?select=movement_id,origen,autorizado_por,aprobado_por,created_by&movement_id=in.(${movementIds.join(',')})`,
-      { headers: _headers }
+      { headers: _headers() }
     );
     if (res.ok) {
       const rows = await res.json();
@@ -54,16 +53,14 @@ export async function renderRegistro(rootEl) {
   // Mostrar spinner mientras carga
   rootEl.innerHTML = `<div class="reg-wrap"><div class="reg-empty"><span class="reg-empty-t" style="opacity:.5">Cargando registros...</span></div></div>`;
 
-  // Sin sesión de coordinador ya no hace falta (no hay JWT/RLS de por medio):
-  // la anon key alcanza para leer la bitácora, igual que para contar.
   let logs = [];
   let fromCloud = false;
 
   if (SUPABASE_URL) {
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/movement_items?select=id,qnty,movements(id,direction,note,occurred_at,client_op_id),products(name,type,client_id)&order=id.desc&limit=500`,
-        { headers: _headers }
+        `${SUPABASE_URL}/rest/v1/movement_items?select=id,qnty,movements(id,direction,note,occurred_at,client_op_id),products(name,category_id,client_id)&order=id.desc&limit=500`,
+        { headers: _headers() }
       );
       if (res.ok) {
         const data = await res.json();
@@ -92,7 +89,7 @@ export async function renderRegistro(rootEl) {
               id: mv.client_op_id || String(m.id),
               item_id: pr.client_id || '',
               nombre: productName || '(sin nombre)',
-              categoria: typeToCat(pr.type),
+              categoria: pr.category_id,
               unidad: 'und',
               cantidad: delta,
               ts: mv.occurred_at || new Date().toISOString(),
@@ -122,7 +119,7 @@ export async function renderRegistro(rootEl) {
   // coordinador de "General" (auth.isGeneral()) ven todo.
   if (auth.isCoordinador() && !auth.isGeneral()) {
     const area = auth.area();
-    logs = logs.filter(l => l.categoria === area);
+    logs = logs.filter(l => String(l.categoria) === String(area));
   }
 
   logs = logs.sort((a, b) => (a.ts < b.ts ? 1 : -1));

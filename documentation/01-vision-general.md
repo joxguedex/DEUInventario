@@ -2,7 +2,7 @@
 
 ## Qué es
 
-**Inventario UCV — Conteo Físico** es una PWA (Progressive Web App) en
+**GBSInventario — Conteo Físico** es una PWA (Progressive Web App) en
 JavaScript vanilla (sin framework, sin build step) para hacer un **inventario
 físico real** de los insumos del centro de acopio de la UCV.
 
@@ -89,7 +89,7 @@ despliegue (Vercel, rama `dev`) sigue siendo propio.
 ## Estructura de carpetas
 
 ```
-UCVInventario/
+GBSInventario/
 ├── index.html            · shell de la app (sidebar + statusbar + nav móvil)
 ├── manifest.json  sw.js   · PWA / offline
 ├── icon.svg

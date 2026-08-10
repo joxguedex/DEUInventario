@@ -1,4 +1,4 @@
-# Documentación — Inventario UCV (Conteo Físico)
+# Documentación — GBSInventario (Conteo Físico)
 
 Documentación técnica del proyecto, generada a partir de una lectura completa
 del código fuente en el repositorio. Está dividida por partes del sistema para

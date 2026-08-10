@@ -1,0 +1,1536 @@
+-- ══════════════════════════════════════════════════════════════════════════
+--  GBSInventario · Esquema para el proyecto Supabase NUEVO e independiente
+--  (public) — espejo del esquema compartido `new_schema_archive` actual,
+--  con los cambios de autenticación/permisos acordados.
+--
+--  Ejecutar completo en el SQL Editor de un proyecto Supabase NUEVO y
+--  VACÍO, contra `public`. Idempotente donde es razonable (create if not
+--  exists / or replace), pero pensado para correr UNA vez sobre un proyecto
+--  recién creado, no para "parchar" el proyecto viejo.
+--
+--  ── Qué es un espejo fiel y qué NO ──────────────────────────────────────
+--  Fiel: todas las tablas de dominio (products/inventory/movements/persons/
+--  phones/requests/checkpoints/comms + todo el dominio de comandas/
+--  ubicaciones/conductores/facultades/carreras/ucevistas/afectados, hoy
+--  poblado por el backend Python de UCVComandas). Se incluye también
+--  `product_aliases`, que existe en el modelo SQLAlchemy real
+--  (backend/app/models/comanda.py) pero no aparecía en el dump `schema.txt`
+--  usado como referencia.
+--
+--  Deliberadamente NO se replica (autorizado explícitamente: "modifícale a
+--  este esquema lo referente a los permisos de Supabase Auth y del nuevo
+--  inicio de sesión"):
+--    - `person_credentials`   → reemplazada por Supabase Auth (auth.users).
+--    - `user_profiles`        → era el gate de un intento previo (y ya
+--                                abandonado) de Supabase Auth; redundante
+--                                con `persons.auth_user_id` (ver abajo).
+--    - `alembic_version`      → bookkeeping interno de Alembic/Python, sin
+--                                sentido sin ese runner de migraciones.
+--    - `comms.alcance`        → existía para repartir un comunicado entre
+--                                los 3 sistemas hermanos; GBSInventario deja
+--                                de compartir la tabla, así que el corte por
+--                                sistema ya no aplica.
+--
+--  Cambios estructurales nuevos (todos dentro del mandato de auth):
+--    - `persons.auth_user_id`  → FK nullable a auth.users. NULL = persona
+--                                 sin inicio de sesión (puede tener uno más
+--                                 adelante, ver la RPC link_person_login).
+--    - `person_status.ci`      → repuntada a persons(ci) en vez de
+--                                 person_credentials(ci) (que desaparece).
+--    - Disparadores set_updated_at() genéricos en todas las tablas con
+--      columna `updated_at` (antes, fuera de `comms`, ese mantenimiento
+--      vivía en el ORM de Python — al independizarse, sin ese backend
+--      encima, hacía falta moverlo a la base).
+--    - RLS con políticas reales por rol/área (antes: `USING (true)` en casi
+--      todo, ver documentation/08-base-de-datos-PENDIENTE.md del repo
+--      viejo) — usa `auth.jwt() -> 'app_metadata'`, nunca editable por el
+--      propio usuario (a diferencia de `user_metadata`).
+--
+--  ── Revisión 2 (categorías dinámicas + Egreso Rápido real) ──────────────
+--  - `products.type` (enum fijo de 13 categorías, específico del centro de
+--    acopio UCV) se reemplaza por `products.category_id` → FK a la tabla
+--    nueva `categories`, administrable por el admin (crear/renombrar/
+--    borrar) desde la app — GBSInventario es una plantilla reusable por
+--    cualquier organización, ya no puede traer categorías hardcodeadas.
+--    El "área" de un coordinador pasa a ser el `id` de una categoría (o el
+--    literal 'general'); borrar una categoría rebaja automáticamente a sus
+--    coordinadores a "sin acceso" (`delete_category()`, sección 8b).
+--  - `create_comanda_rapida` (sección 9b) — Egreso Rápido NO usa
+--    `apply_count`: genera una comanda + movimiento de salida real
+--    (multi-ítem, con reserva de stock atómica). Faltaba en la revisión 1
+--    de este script; sin ella, la Bitácora nunca vería los egresos.
+--  - Todas las RPC de escritura (apply_count/uncount_item/delete_count/
+--    create_comanda_rapida/merge_product/despachos) ahora validan que el
+--    actor tenga acceso a la categoría del producto tocado
+--    (`can_access_category()`), y las políticas RLS de products/inventory/
+--    movements/movement_items/comandas/comanda_items filtran por categoría
+--    de la misma forma — un coordinador de una categoría real ya no puede
+--    ver ni tocar insumos de otra, ni por RPC ni por REST directo.
+--
+--  ── Lo que este script NO puede hacer (queda para la Edge Function) ────
+--  Crear/borrar un usuario de Auth y fijar su `app_metadata` (rol/área)
+--  requiere la Admin API de Supabase (service_role key) — no es alcanzable
+--  desde SQL puro ni con una RPC SECURITY DEFINER corriente. Este script
+--  deja el terreno listo (persons.auth_user_id, helpers de rol/área, RLS
+--  que los usa, y la RPC `link_person_login` que la Edge Function llama
+--  para completar el vínculo) pero la function en sí es un siguiente paso.
+-- ══════════════════════════════════════════════════════════════════════════
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  1. ENUMS
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- Categorías de producto: YA NO es un enum fijo (las 13 categorías del
+-- esquema viejo eran específicas del centro de acopio UCV). GBSInventario es
+-- una plantilla reutilizable por distintas organizaciones — las categorías
+-- son una tabla (`categories`, sección 2) que cada admin puebla a su gusto,
+-- creable/editable/eliminable desde la app. El "área" de un coordinador
+-- (`auth.users.app_metadata->>'area'`) pasa a ser el `id` de una categoría
+-- (texto, p.ej. '7') o el literal 'general' — ver sección 8.
+create type public.movement_direction as enum ('in', 'out');
+create type public.request_status as enum ('open', 'fulfilled', 'cancelled');
+
+-- Rol de plataforma. 'voluntario' se conserva por fidelidad de dominio
+-- (una `persons` puede seguir clasificándose así vía `person_categoria`),
+-- pero bajo el modelo nuevo NINGUNA cuenta de Auth se crea con este rol —
+-- ver la nota en la sección de Auth más abajo.
+create type public.person_role as enum ('admin', 'coordinador', 'voluntario');
+
+create type public.person_categoria as enum (
+  'Voluntario', 'Medico', 'Rescatista', 'Conductor', 'Externo', 'Afectado'
+);
+
+create type public.comanda_status as enum (
+  'pending', 'processing', 'extracted', 'verified', 'exported', 'error',
+  'por_despachar', 'despachada', 'completada', 'fallida'
+);
+create type public.comanda_origen as enum (
+  'ocr', 'manual', 'rapida', 'manual_antigua', 'personal'
+);
+create type public.comanda_imagen_tipo as enum ('ocr', 'entrega', 'otra');
+
+create type public.ubicacion_tipo as enum (
+  'albergue_refugio', 'general_institucional', 'centro_acopio',
+  'ong_organizacion_civil', 'otro'
+);
+create type public.ubicacion_estado as enum (
+  'confirmada', 'por_confirmar', 'en_camino', 'no_seguro', 'inhabilitado', 'cerrado'
+);
+create type public.tipo_albergue as enum (
+  'oficial_institucional', 'comunitario_autogestionado', 'otro'
+);
+create type public.tipo_espacio as enum (
+  'espacios_estructurados', 'espacios_publicos_organizados',
+  'via_publica_intemperie', 'otro'
+);
+create type public.nivel_vulnerabilidad as enum ('baja', 'media', 'alta', 'critica');
+
+create type public.conductor_tipo_vehiculo as enum (
+  'moto', 'camioneta', 'camion', 'carro', 'pick_up'
+);
+create type public.dia_semana as enum (
+  'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'
+);
+create type public.bloque_horario as enum (
+  'bloque_9_12', 'bloque_12_15', 'bloque_15_18', 'bloque_18_21', 'bloque_21_24'
+);
+create type public.zona_transporte as enum ('caracas', 'la_guaira', 'miranda');
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  2. NÚCLEO — catálogo, inventario, movimientos, personas
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- Categorías de insumos — configurables por el admin (ver nota de la
+-- sección 1). Crear una habilita designar coordinadores de esa categoría
+-- (su "área"); borrarla los rebaja automáticamente a personas sin acceso
+-- (sección 8, delete_category()). El nombre SÍ es editable libremente: el
+-- `id` (inmutable) es lo que se guarda como área, nunca el nombre.
+create table public.categories (
+  id          bigint generated always as identity primary key,
+  nombre      text not null unique check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 100),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create table public.products (
+  id           bigint generated always as identity primary key,
+  name         text not null check (char_length(trim(name)) > 0 and char_length(name) <= 200),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  metadata     jsonb not null default '{}'::jsonb,
+  umbral       integer not null default 10 check (umbral >= 0),
+  client_id    text not null unique,
+  deleted_at   timestamptz,
+  unidad       text not null default 'und',
+  category_id  bigint not null references public.categories (id) on delete restrict,
+  constraint products_name_unidad_key unique (name, unidad)
+);
+create index products_category_id_idx on public.products (category_id);
+
+create table public.inventory (
+  product_id       bigint primary key references public.products (id) on delete cascade,
+  qnty             integer not null default 0 check (qnty >= 0),
+  last_counted_at  timestamptz,
+  last_counted_by  text
+);
+
+create table public.phones (
+  id            bigint generated always as identity primary key,
+  company_code  text not null check (company_code ~ '^(0412|0414|0416|0422|0424|0426|02[0-9]{2})$'),
+  number        text not null check (number ~ '^[0-9]{7}$'),
+  unique (company_code, number)
+);
+
+create table public.persons (
+  ci            bigint primary key check (ci > 0),
+  name          text not null check (char_length(trim(name)) > 0 and char_length(name) <= 200),
+  surname       text not null check (char_length(trim(surname)) > 0 and char_length(surname) <= 200),
+  phone_id      bigint not null references public.phones (id),
+  categoria     public.person_categoria,
+  -- NULL = persona sin inicio de sesión. Se llena vía link_person_login()
+  -- (llamada por la Edge Function tras crear el usuario en auth.users).
+  auth_user_id  uuid unique references auth.users (id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index persons_auth_user_id_idx on public.persons (auth_user_id);
+
+create table public.movements (
+  id            bigint generated always as identity primary key,
+  direction     public.movement_direction not null default 'in',
+  destination   text check (destination is null or char_length(destination) <= 200),
+  received_by   bigint references public.persons (ci) on delete set null,
+  delivered_by  bigint references public.persons (ci) on delete set null,
+  occurred_at   timestamptz not null default now(),
+  note          text check (note is null or char_length(note) <= 2000),
+  client_op_id  text unique
+);
+
+create table public.movement_items (
+  id           bigint generated always as identity primary key,
+  movement_id  bigint not null references public.movements (id) on delete cascade,
+  product_id   bigint not null references public.products (id) on delete restrict,
+  qnty         integer not null check (qnty > 0)
+);
+
+create table public.requests (
+  id                bigint generated always as identity primary key,
+  product_id        bigint not null references public.products (id) on delete cascade,
+  requester_id      bigint references public.persons (ci) on delete set null,
+  qnty              integer not null check (qnty > 0),
+  qnty_outstanding  integer not null check (qnty_outstanding >= 0),
+  status            public.request_status not null default 'open',
+  requested_at      timestamptz not null default now(),
+  note              text check (note is null or char_length(note) <= 2000)
+);
+
+create table public.checkpoints (
+  id          text primary key,
+  creado_por  text not null,
+  data        jsonb not null,
+  created_at  timestamptz default now()
+);
+
+create table public.comms (
+  id          text primary key,
+  titulo      text not null check (char_length(trim(titulo)) > 0),
+  urgencia    text not null check (urgencia in ('info', 'urgente', 'critico')),
+  cuerpo      text not null check (char_length(trim(cuerpo)) > 0),
+  autor       text not null default 'Anónimo',
+  activo      boolean not null default true,
+  fecha       bigint not null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index comms_updated_at_idx on public.comms (updated_at);
+create index comms_activo_idx on public.comms (activo, urgencia);
+
+-- 1:1 opcional. Antes ligada a person_credentials(ci); repuntada a
+-- persons(ci) porque person_credentials desaparece con este script.
+create table public.person_status (
+  ci          bigint primary key references public.persons (ci) on delete cascade,
+  active      boolean not null default true,
+  updated_at  timestamptz not null default now()
+);
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  3. DOMINIO COMANDAS (hoy poblado por el backend Python de UCVComandas —
+--     se replica la estructura por fidelidad; queda inerte hasta que
+--     GBSInventario tenga su propio flujo de solicitudes/entregas)
+-- ══════════════════════════════════════════════════════════════════════════
+
+create table public.comandas_viejas (
+  id                      integer generated always as identity primary key,
+  nombre_centro           varchar(255),
+  direccion               text,
+  solicitante             varchar(255),
+  solicitante_cedula      varchar(50),
+  solicitante_telefono    varchar(50),
+  estudiante_resp         varchar(255),
+  estudiante_resp_cedula  varchar(50),
+  estudiante_resp_telefono varchar(50),
+  conductor               varchar(255),
+  conductor_cedula        varchar(50),
+  conductor_telefono      varchar(50),
+  placa_vehiculo          varchar(50),
+  tipo_vehiculo           varchar(100),
+  firma_receptor          boolean default false,
+  ocr_raw_response        text,
+  ocr_error               text,
+  ocr_model               varchar(50),
+  confianza_campos        jsonb
+);
+
+create table public.conductores (
+  ci          bigint primary key references public.persons (ci) on delete cascade,
+  activo      boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz
+);
+
+create table public.comandas (
+  id                              integer generated always as identity primary key,
+  comanda_vieja_id                integer references public.comandas_viejas (id) on delete set null,
+  solicitante_ci                  bigint references public.persons (ci) on delete set null,
+  estudiante_resp_ci              bigint references public.persons (ci) on delete set null,
+  conductor_ci                    bigint references public.conductores (ci) on delete set null,
+  ubicacion_id                    bigint,  -- FK agregada en la sección 4 (ubicaciones se define después)
+  direccion                       text,
+  fecha                           date,
+  beneficiarios_hombres           integer check (beneficiarios_hombres is null or beneficiarios_hombres >= 0),
+  beneficiarios_mujeres           integer check (beneficiarios_mujeres is null or beneficiarios_mujeres >= 0),
+  beneficiarios_ninos             integer check (beneficiarios_ninos is null or beneficiarios_ninos >= 0),
+  beneficiarios_adultos_mayores   integer check (beneficiarios_adultos_mayores is null or beneficiarios_adultos_mayores >= 0),
+  beneficiarios_familias          integer check (beneficiarios_familias is null or beneficiarios_familias >= 0),
+  beneficiarios_perros            integer check (beneficiarios_perros is null or beneficiarios_perros >= 0),
+  beneficiarios_gatos             integer check (beneficiarios_gatos is null or beneficiarios_gatos >= 0),
+  beneficiarios_total             integer check (beneficiarios_total is null or beneficiarios_total >= 0),
+  prioridad                       varchar(100),
+  hora_salida                     time,
+  hora_llegada                    time,
+  autorizado_por                  varchar(255),
+  notas                           text,
+  status                          public.comanda_status not null default 'pending',
+  origen                          public.comanda_origen not null,
+  responsable_entrega_ci          bigint references public.persons (ci) on delete set null,
+  aprobado_por_ci                 bigint references public.persons (ci) on delete set null,
+  aprobado_por                    varchar(200),
+  created_by_ci                   bigint references public.persons (ci) on delete set null,
+  created_by                      varchar(200),
+  last_edited_by_ci               bigint references public.persons (ci) on delete set null,
+  last_edited_by                  varchar(200),
+  locked_by                       varchar(64),
+  locked_at                       timestamptz,
+  created_at                      timestamptz default now(),
+  updated_at                      timestamptz,
+  processed_at                    timestamptz,
+  exported_at                     timestamptz,
+  deleted_at                      timestamptz,
+  client_op_id                    text unique,
+  movement_id                     bigint references public.movements (id) on delete set null
+);
+create index comandas_deleted_at_idx on public.comandas (deleted_at);
+create index comandas_status_idx on public.comandas (status);
+
+create table public.comanda_items (
+  id                integer generated always as identity primary key,
+  comanda_id        integer not null references public.comandas (id) on delete cascade,
+  producto          varchar(500) not null,
+  cantidad          numeric(12, 3),
+  unidad            varchar(50),
+  confianza         varchar(10),
+  confianza_pct     integer,
+  producto_id       bigint references public.products (id),
+  movement_item_id  bigint references public.movement_items (id) on delete set null,
+  despachado        boolean not null default false,
+  despachado_por_ci bigint references public.persons (ci) on delete set null,
+  despachado_por    varchar(200),
+  despachado_at     timestamptz
+);
+create index comanda_items_comanda_id_idx on public.comanda_items (comanda_id);
+create index comanda_items_producto_id_idx on public.comanda_items (producto_id);
+
+create table public.comanda_imagenes (
+  id             integer generated always as identity primary key,
+  comanda_id     integer not null references public.comandas (id) on delete cascade,
+  filename       varchar(255) not null,
+  url            varchar(500) not null,
+  tipo           public.comanda_imagen_tipo not null default 'otra',
+  created_by_ci  bigint references public.persons (ci) on delete set null,
+  created_by     varchar(200),
+  created_at     timestamptz default now()
+);
+create index comanda_imagenes_comanda_id_idx on public.comanda_imagenes (comanda_id);
+
+create table public.product_aliases (
+  id          integer generated always as identity primary key,
+  product_id  integer not null references public.products (id),
+  alias       varchar(500) not null unique,
+  created_at  timestamptz default now()
+);
+create index product_aliases_product_id_idx on public.product_aliases (product_id);
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  4. DOMINIO UBICACIONES
+-- ══════════════════════════════════════════════════════════════════════════
+
+create table public.municipios (
+  id      smallint generated always as identity primary key,
+  nombre  text not null unique check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 150)
+);
+
+create table public.parroquias (
+  id            smallint generated always as identity primary key,
+  nombre        text not null check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 150),
+  municipio_id  smallint not null references public.municipios (id) on delete restrict
+);
+
+create table public.rutas_ejes (
+  id      smallint generated always as identity primary key,
+  nombre  text not null unique check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 300)
+);
+
+create table public.ubicaciones (
+  id                              bigint generated always as identity primary key,
+  codigo                          text check (codigo is null or char_length(codigo) <= 20),
+  nombre                          text not null check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 300),
+  es_generica                     boolean not null default false,
+  -- Origen por defecto de un Egreso Rápido (sección 9b, create_comanda_rapida).
+  -- Reemplaza el nombre hardcodeado "UCV Centro de Acopio" del sistema viejo:
+  -- cada organización marca UNA ubicación genérica propia con este flag.
+  es_default_egreso               boolean not null default false,
+  tipo                            public.ubicacion_tipo not null default 'otro',
+  estado                          public.ubicacion_estado not null default 'por_confirmar',
+  municipio_id                    smallint references public.municipios (id) on delete set null,
+  parroquia_id                    smallint references public.parroquias (id) on delete set null,
+  ruta_eje_id                     smallint references public.rutas_ejes (id) on delete set null,
+  ubicacion_exacta                text check (ubicacion_exacta is null or char_length(ubicacion_exacta) <= 500),
+  referencia_gps                  text check (referencia_gps is null or char_length(referencia_gps) <= 300),
+  dias_sin_atencion_maximo        integer,
+  tipo_albergue                   public.tipo_albergue,
+  tipo_espacio                    public.tipo_espacio,
+  vulnerabilidad                  public.nivel_vulnerabilidad,
+  verificador_ci                  bigint references public.persons (ci) on delete set null,
+  verificador                     text check (verificador is null or char_length(verificador) <= 200),
+  verificador_asignado_en         timestamptz,
+  beneficiarios_hombres           integer check (beneficiarios_hombres is null or beneficiarios_hombres >= 0),
+  beneficiarios_mujeres           integer check (beneficiarios_mujeres is null or beneficiarios_mujeres >= 0),
+  beneficiarios_ninos             integer check (beneficiarios_ninos is null or beneficiarios_ninos >= 0),
+  beneficiarios_adultos_mayores   integer check (beneficiarios_adultos_mayores is null or beneficiarios_adultos_mayores >= 0),
+  beneficiarios_familias          integer check (beneficiarios_familias is null or beneficiarios_familias >= 0),
+  beneficiarios_total             integer check (beneficiarios_total is null or beneficiarios_total >= 0),
+  desglose_poblacion              text,
+  requerimientos                  text,
+  atencion_requerida               text,
+  capacidad_logistica              text,
+  capacidades_atencion             text,
+  confirmado_por                   text check (confirmado_por is null or char_length(confirmado_por) <= 200),
+  observaciones                    text,
+  transporte_notas                 text,
+  created_at                       timestamptz not null default now(),
+  updated_at                       timestamptz not null default now(),
+  deleted_at                       timestamptz
+);
+create index ubicaciones_deleted_at_idx on public.ubicaciones (deleted_at);
+-- A lo sumo una ubicación puede ser el destino por defecto de Egreso Rápido.
+create unique index ubicaciones_unica_default_egreso_idx on public.ubicaciones (es_default_egreso) where es_default_egreso;
+
+alter table public.comandas
+  add constraint comandas_ubicacion_fkey foreign key (ubicacion_id)
+  references public.ubicaciones (id) on delete set null;
+
+create table public.ubicacion_contactos (
+  id            bigint generated always as identity primary key,
+  ubicacion_id  bigint not null references public.ubicaciones (id) on delete cascade,
+  nombre        text not null check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 200),
+  telefono      text check (telefono is null or char_length(telefono) <= 100),
+  rol           text check (rol is null or char_length(rol) <= 200),
+  created_at    timestamptz not null default now()
+);
+
+create table public.ubicacion_imagenes (
+  id             bigint generated always as identity primary key,
+  ubicacion_id   bigint not null references public.ubicaciones (id) on delete cascade,
+  filename       text not null check (char_length(filename) <= 255),
+  url            text not null,
+  created_by_ci  bigint references public.persons (ci) on delete set null,
+  created_by     text,
+  created_at     timestamptz not null default now()
+);
+
+-- Presente en el dump de referencia (schema.txt) pero sin modelo activo en
+-- el backend actual — se replica igual por fidelidad ("espejo completo").
+create table public.ubicacion_snapshots (
+  id               bigint generated always as identity primary key,
+  ubicacion_id     bigint not null references public.ubicaciones (id) on delete cascade,
+  registrado_por   bigint references public.persons (ci) on delete set null,
+  estado           public.ubicacion_estado,
+  num_personas     integer check (num_personas is null or num_personas >= 0),
+  num_familias     integer check (num_familias is null or num_familias >= 0),
+  num_ninos        integer check (num_ninos is null or num_ninos >= 0),
+  requerimientos   text,
+  notas            text,
+  registrado_en    timestamptz not null default now()
+);
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  5. DOMINIO CONDUCTORES (complementa conductores, creada en la sección 3
+--     por ser referenciada desde comandas)
+-- ══════════════════════════════════════════════════════════════════════════
+
+create table public.conductor_vehiculos (
+  id            integer generated always as identity primary key,
+  conductor_ci  bigint not null references public.conductores (ci) on delete cascade,
+  tipo_vehiculo public.conductor_tipo_vehiculo not null,
+  placa         varchar(20) not null,
+  created_at    timestamptz not null default now()
+);
+create index conductor_vehiculos_conductor_ci_idx on public.conductor_vehiculos (conductor_ci);
+
+create table public.conductor_dias (
+  id            integer generated always as identity primary key,
+  conductor_ci  bigint not null references public.conductores (ci) on delete cascade,
+  dia           public.dia_semana not null,
+  unique (conductor_ci, dia)
+);
+create index conductor_dias_conductor_ci_idx on public.conductor_dias (conductor_ci);
+
+create table public.conductor_horarios (
+  id            integer generated always as identity primary key,
+  conductor_ci  bigint not null references public.conductores (ci) on delete cascade,
+  bloque        public.bloque_horario not null,
+  unique (conductor_ci, bloque)
+);
+create index conductor_horarios_conductor_ci_idx on public.conductor_horarios (conductor_ci);
+
+create table public.conductor_zonas (
+  id            integer generated always as identity primary key,
+  conductor_ci  bigint not null references public.conductores (ci) on delete cascade,
+  zona          public.zona_transporte not null,
+  unique (conductor_ci, zona)
+);
+create index conductor_zonas_conductor_ci_idx on public.conductor_zonas (conductor_ci);
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  6. PERSONAS COMPLEMENTARIAS (ucevistas/afectados/facultades/carreras)
+-- ══════════════════════════════════════════════════════════════════════════
+
+create table public.facultades (
+  id      bigint generated always as identity primary key,
+  nombre  varchar(200) not null unique
+);
+
+create table public.carreras (
+  id            bigint generated always as identity primary key,
+  facultad_id   bigint not null references public.facultades (id) on delete restrict,
+  nombre        varchar(200) not null,
+  unique (facultad_id, nombre)
+);
+
+create table public.ucevistas (
+  ci            bigint primary key references public.persons (ci) on delete cascade,
+  facultad_id   bigint references public.facultades (id) on delete set null,
+  carrera_id    bigint references public.carreras (id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz
+);
+
+create table public.afectados (
+  ci                      bigint primary key references public.persons (ci) on delete cascade,
+  informacion_adicional   text,
+  created_at              timestamptz default now(),
+  updated_at              timestamptz
+);
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  7. TRIGGERS
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- 7.1 — updated_at genérico, aplicado a toda tabla que tenga esa columna.
+create or replace function public.set_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+do $$
+declare t text;
+begin
+  for t in
+    select c.relname from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and a.attname = 'updated_at' and c.relkind = 'r' and not a.attisdropped
+  loop
+    execute format(
+      'create trigger trg_%s_updated_at before update on public.%I for each row execute function public.set_updated_at()',
+      t, t
+    );
+  end loop;
+end $$;
+
+-- 7.2 — cada producto nuevo arranca con su fila de inventory en 0.
+create or replace function public.create_inventory_row() returns trigger
+language plpgsql as $$
+begin
+  insert into public.inventory (product_id) values (new.id);
+  return new;
+end;
+$$;
+create trigger trg_products_create_inventory
+  after insert on public.products
+  for each row execute function public.create_inventory_row();
+
+-- 7.3 — ajusta inventory.qnty al insertar una línea de movimiento, y paga
+-- requests abiertas (oldest-first) cuando el movimiento es de entrada.
+create or replace function public.apply_movement_item() returns trigger
+language plpgsql as $$
+declare
+  dir     public.movement_direction;
+  budget  integer;
+  r       record;
+begin
+  select direction into dir from public.movements where id = new.movement_id;
+
+  if dir = 'in' then
+    update public.inventory set qnty = qnty + new.qnty where product_id = new.product_id;
+
+    budget := new.qnty;
+    for r in
+      select id, qnty_outstanding from public.requests
+       where product_id = new.product_id and status = 'open'
+       order by requested_at, id
+    loop
+      exit when budget <= 0;
+      if r.qnty_outstanding <= budget then
+        update public.requests set qnty_outstanding = 0, status = 'fulfilled' where id = r.id;
+        budget := budget - r.qnty_outstanding;
+      else
+        update public.requests set qnty_outstanding = qnty_outstanding - budget where id = r.id;
+        budget := 0;
+      end if;
+    end loop;
+  else
+    update public.inventory set qnty = qnty - new.qnty where product_id = new.product_id;
+  end if;
+
+  return new;
+end;
+$$;
+create trigger trg_movement_items_apply
+  after insert on public.movement_items
+  for each row execute function public.apply_movement_item();
+
+-- 7.4 — revierte/ajusta inventory.qnty al corregir o borrar una línea ya
+-- aplicada (usado por "corregir/borrar" en la Bitácora).
+create or replace function public.apply_movement_item_changes() returns trigger
+language plpgsql as $$
+declare dir public.movement_direction;
+begin
+  if tg_op = 'DELETE' then
+    select direction into dir from public.movements where id = old.movement_id;
+    if dir = 'in' then
+      update public.inventory set qnty = qnty - old.qnty where product_id = old.product_id;
+    else
+      update public.inventory set qnty = qnty + old.qnty where product_id = old.product_id;
+    end if;
+    return old;
+  end if;
+
+  if tg_op = 'UPDATE' then
+    if new.qnty <> old.qnty then
+      select direction into dir from public.movements where id = new.movement_id;
+      if dir = 'in' then
+        update public.inventory set qnty = qnty + (new.qnty - old.qnty) where product_id = new.product_id;
+      else
+        update public.inventory set qnty = qnty - (new.qnty - old.qnty) where product_id = new.product_id;
+      end if;
+    end if;
+    return new;
+  end if;
+
+  return null;
+end;
+$$;
+create trigger trg_movement_items_update_delete
+  after update or delete on public.movement_items
+  for each row execute function public.apply_movement_item_changes();
+
+-- 7.5 — exige que todo movement tenga al menos una línea (deferred: permite
+-- insertar movement + movement_items en la misma transacción).
+create or replace function public.movement_has_items() returns trigger
+language plpgsql as $$
+begin
+  if not exists (select 1 from public.movement_items where movement_id = new.id) then
+    raise exception 'Movement % must have at least one item', new.id;
+  end if;
+  return null;
+end;
+$$;
+create constraint trigger trg_movement_has_items
+  after insert on public.movements
+  deferrable initially deferred
+  for each row execute function public.movement_has_items();
+
+-- 7.6 — una request nueva arranca con todo el monto pendiente.
+create or replace function public.init_request_outstanding() returns trigger
+language plpgsql as $$
+begin
+  if new.qnty_outstanding is null then
+    new.qnty_outstanding := new.qnty;
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_requests_init
+  before insert on public.requests
+  for each row execute function public.init_request_outstanding();
+
+-- 7.7 — borra el teléfono de una persona al eliminarla.
+create or replace function public.delete_person_phone() returns trigger
+language plpgsql as $$
+begin
+  delete from public.phones where id = old.phone_id;
+  return old;
+end;
+$$;
+create trigger trg_persons_delete_phone
+  after delete on public.persons
+  for each row execute function public.delete_person_phone();
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  8. AUTENTICACIÓN — helpers de rol/área a partir del JWT de Supabase Auth
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- Rol/área viven en auth.users.raw_app_meta_data — solo lo puede escribir
+-- la Admin API (service_role), nunca el propio usuario (a diferencia de
+-- user_metadata). Estas funciones leen el JWT ya verificado de la sesión
+-- actual, no hacen falta joins ni relecturas de tabla.
+create or replace function public.current_role() returns text
+language sql stable as $$
+  select coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '')
+$$;
+
+create or replace function public.current_area() returns text
+language sql stable as $$
+  select auth.jwt() -> 'app_metadata' ->> 'area'
+$$;
+
+create or replace function public.is_admin() returns boolean
+language sql stable as $$
+  select public.current_role() = 'admin'
+$$;
+
+create or replace function public.is_coordinador() returns boolean
+language sql stable as $$
+  select public.current_role() = 'coordinador'
+$$;
+
+-- ci de la persona detrás de la sesión actual, resuelto vía persons.auth_user_id.
+create or replace function public.current_person_ci() returns bigint
+language sql stable security definer set search_path = public as $$
+  select ci from public.persons where auth_user_id = auth.uid()
+$$;
+
+-- El área de un coordinador ES el id de una categoría (texto), o el literal
+-- 'general' (sin categoría propia — ve/despacha todo, nunca edita, ver
+-- 05-autenticacion.md del sistema viejo). NULL si el área no está fijada
+-- (p.ej. admin, que no tiene categoría propia) o si el valor es 'general'.
+create or replace function public.current_category_id() returns bigint
+language sql stable as $$
+  select nullif(public.current_area(), 'general')::bigint
+$$;
+
+-- ¿Puede el actor actual tocar productos/movimientos de esta categoría?
+-- admin: siempre. coordinador de 'general': siempre (consulta/despacha todo,
+-- nunca su propio inventario). coordinador de categoría real: solo la suya.
+create or replace function public.can_access_category(p_category_id bigint) returns boolean
+language sql stable as $$
+  select public.is_admin()
+      or public.current_area() = 'general'
+      or p_category_id = public.current_category_id()
+$$;
+
+-- Completa el vínculo persons -> auth.users tras crear la cuenta con la
+-- Admin API. Solo la Edge Function la llama (service_role bypassa RLS y
+-- grants por diseño de Supabase) — no se otorga EXECUTE a anon/authenticated
+-- a propósito: nadie con solo la anon/authenticated key puede auto-vincularse
+-- una cuenta ajena.
+create or replace function public.link_person_login(p_ci bigint, p_auth_user_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.persons set auth_user_id = p_auth_user_id where ci = p_ci;
+  if not found then
+    raise exception 'Persona % no existe', p_ci;
+  end if;
+end;
+$$;
+revoke execute on function public.link_person_login(bigint, uuid) from public, anon, authenticated;
+
+-- Crea una persona SIN inicio de sesión (nombre/apellido/cédula/teléfono).
+-- admin y coordinador pueden llamarla — la política real de "quién puede
+-- crear a quién" vive en RLS sobre `persons` (sección 9), esta RPC solo
+-- resuelve el alta de phones + persons en una transacción.
+create or replace function public.create_person(
+  p_ci bigint, p_name text, p_surname text,
+  p_phone_company_code text, p_phone_number text,
+  p_categoria public.person_categoria default null
+) returns table(ci bigint, name text, surname text)
+language plpgsql security definer set search_path = public as $$
+declare v_phone_id bigint;
+begin
+  if public.current_role() not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para crear personas';
+  end if;
+
+  insert into public.phones (company_code, number)
+    values (p_phone_company_code, p_phone_number)
+    on conflict (company_code, number) do nothing;
+  select id into v_phone_id from public.phones
+    where company_code = p_phone_company_code and number = p_phone_number;
+
+  insert into public.persons (ci, name, surname, phone_id, categoria)
+    values (p_ci, p_name, p_surname, v_phone_id, p_categoria);
+
+  return query select p_ci, p_name, p_surname;
+end;
+$$;
+grant execute on function public.create_person(bigint, text, text, text, text, public.person_categoria) to authenticated;
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  8b. CATEGORÍAS — CRUD, admin-only (GBSInventario es una plantilla: cada
+--      organización define sus propias categorías, no un set fijo).
+-- ══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.create_category(p_nombre text) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare v_id bigint;
+begin
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede crear categorías';
+  end if;
+  if p_nombre is null or btrim(p_nombre) = '' then
+    raise exception 'El nombre de la categoría es obligatorio';
+  end if;
+  insert into public.categories (nombre) values (btrim(p_nombre)) returning id into v_id;
+  return v_id;
+end;
+$$;
+grant execute on function public.create_category(text) to authenticated;
+
+create or replace function public.update_category(p_id bigint, p_nombre text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede editar categorías';
+  end if;
+  if p_nombre is null or btrim(p_nombre) = '' then
+    raise exception 'El nombre de la categoría es obligatorio';
+  end if;
+  update public.categories set nombre = btrim(p_nombre) where id = p_id;
+  if not found then raise exception 'Categoría % no existe', p_id; end if;
+end;
+$$;
+grant execute on function public.update_category(bigint, text) to authenticated;
+
+-- Borra una categoría. Bloquea si todavía hay productos asignados (el admin
+-- debe reasignarlos con update_product_category, o eliminarlos, primero) —
+-- evita productos huérfanos y borrados accidentales de catálogo completo.
+--
+-- Efecto en cascada sobre personas: cualquier coordinador cuya área sea esta
+-- categoría queda SIN ACCESO — "rebajado a persona sin acceso al sistema"
+-- (no se borra ni la persona ni la cuenta de Auth, solo se le limpia
+-- rol/área). auth.users vive en la misma base Postgres, así que un UPDATE
+-- directo sobre su columna de metadata no requiere la Admin API — a
+-- diferencia de crear/borrar una cuenta, que sí la requiere (ver Edge
+-- Function). CAVEAT importante: el JWT de una sesión ya emitida sigue
+-- teniendo el rol/área viejo hasta que se refresca (Supabase lo renueva
+-- automáticamente cada ~1h) — para revocar al instante hace falta además
+-- invalidar su sesión (auth.admin.signOut), eso sí vive en la Edge Function.
+create or replace function public.delete_category(p_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede eliminar categorías';
+  end if;
+  if exists (select 1 from public.products where category_id = p_id) then
+    raise exception 'Hay productos en esta categoría — reasígnalos o elimínalos antes de borrarla';
+  end if;
+
+  update auth.users
+     set raw_app_meta_data = raw_app_meta_data - 'role' - 'area'
+   where raw_app_meta_data ->> 'area' = p_id::text;
+
+  delete from public.categories where id = p_id;
+  if not found then raise exception 'Categoría % no existe', p_id; end if;
+end;
+$$;
+grant execute on function public.delete_category(bigint) to authenticated;
+
+-- Lista personas CON inicio de sesión y su rol/área — admin-only. Hace
+-- falta una RPC (no un SELECT REST normal) porque rol/área viven en
+-- auth.users.app_metadata, tabla que PostgREST nunca expone a
+-- anon/authenticated directamente. La Edge Function (manage-users) es quien
+-- escribe ese rol/área; esta RPC solo lee, para pintar el hub de accesos.
+create or replace function public.list_users_with_access() returns table(
+  ci bigint, name text, surname text, email text, role text, area text
+)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede listar usuarios';
+  end if;
+
+  return query
+    select p.ci, p.name, p.surname, u.email::text,
+           u.raw_app_meta_data ->> 'role', u.raw_app_meta_data ->> 'area'
+    from public.persons p
+    join auth.users u on u.id = p.auth_user_id
+    where u.raw_app_meta_data ->> 'role' is not null
+      and u.raw_app_meta_data ->> 'role' <> 'admin'
+    order by p.name, p.surname;
+end;
+$$;
+grant execute on function public.list_users_with_access() to authenticated;
+
+-- Reasigna la categoría de un producto — admin-only, a diferencia de crear/
+-- editar/borrar insumos (que sí puede un coordinador de esa categoría).
+create or replace function public.update_product_category(p_product_id bigint, p_category_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Solo un administrador puede reasignar la categoría de un producto';
+  end if;
+  update public.products set category_id = p_category_id, updated_at = now() where id = p_product_id;
+  if not found then raise exception 'Producto % no existe', p_product_id; end if;
+end;
+$$;
+grant execute on function public.update_product_category(bigint, bigint) to authenticated;
+
+-- Autoservicio de perfil — a diferencia del sistema viejo, el actor NUNCA
+-- se manda como parámetro (p_actor_ci): sale de auth.uid() vía el JWT ya
+-- verificado, así que no hay forma de que alguien edite el perfil de otra
+-- persona pasando un ci ajeno.
+create or replace function public.update_own_profile(
+  p_name text, p_surname text, p_phone_company_code text, p_phone_number text
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_ci bigint; v_phone_id bigint;
+begin
+  v_ci := public.current_person_ci();
+  if v_ci is null then
+    raise exception 'Sesión sin persona asociada';
+  end if;
+  if p_name is null or btrim(p_name) = '' or p_surname is null or btrim(p_surname) = '' then
+    raise exception 'Nombre y apellido son obligatorios';
+  end if;
+
+  insert into public.phones (company_code, number)
+    values (p_phone_company_code, p_phone_number)
+    on conflict (company_code, number) do nothing;
+  select id into v_phone_id from public.phones
+    where company_code = p_phone_company_code and number = p_phone_number;
+
+  update public.persons
+     set name = btrim(p_name), surname = btrim(p_surname), phone_id = v_phone_id
+   where ci = v_ci;
+end;
+$$;
+grant execute on function public.update_own_profile(text, text, text, text) to authenticated;
+
+-- NOTA: promover/degradar rol, asignar área, activar/desactivar login,
+-- resetear contraseña de otro usuario y eliminar una cuenta de Auth
+-- requieren la Admin API (service_role) — viven en la Edge Function, no
+-- acá. Ver el punto 4 del resumen al final del mensaje.
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  9. CONTEO DE INVENTARIO — RPCs (mismo motor que la app usa hoy, portado
+--     a auth.uid() en vez de un p_actor_ci enviado por el cliente)
+-- ══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.apply_count(
+  p_client_op_id       text,
+  p_product_client_id  text,
+  p_delta              integer
+) returns integer
+language plpgsql security definer set search_path = public as $$
+declare v_pid bigint; v_cat bigint; v_mid bigint; v_qty integer; v_ci bigint;
+begin
+  if public.current_role() not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para modificar el inventario';
+  end if;
+  v_ci := public.current_person_ci();
+
+  select id, category_id into v_pid, v_cat from public.products where client_id = p_product_client_id;
+  if v_pid is null then
+    raise exception 'Producto % no existe', p_product_client_id;
+  end if;
+  if not public.can_access_category(v_cat) then
+    raise exception 'No tienes permiso para modificar insumos de esta categoría';
+  end if;
+
+  if p_client_op_id is not null and exists (
+    select 1 from public.movements where client_op_id = p_client_op_id
+  ) then
+    select qnty into v_qty from public.inventory where product_id = v_pid;
+    return v_qty;
+  end if;
+
+  if p_delta <> 0 then
+    insert into public.movements (direction, note, client_op_id, delivered_by)
+      values (
+        case when p_delta > 0 then 'in'::public.movement_direction else 'out'::public.movement_direction end,
+        null, p_client_op_id, v_ci
+      ) returning id into v_mid;
+
+    insert into public.movement_items (movement_id, product_id, qnty)
+      values (v_mid, v_pid, abs(p_delta));
+  end if;
+
+  update public.inventory
+     set last_counted_at = now(),
+         last_counted_by = coalesce((select name || ' ' || surname from public.persons where ci = v_ci), last_counted_by)
+   where product_id = v_pid;
+
+  select qnty into v_qty from public.inventory where product_id = v_pid;
+  return v_qty;
+end;
+$$;
+grant execute on function public.apply_count(text, text, integer) to authenticated;
+
+create or replace function public.uncount_item(p_product_client_id text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_pid bigint; v_cat bigint;
+begin
+  if public.current_role() not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para modificar el inventario';
+  end if;
+
+  select id, category_id into v_pid, v_cat from public.products where client_id = p_product_client_id;
+  if v_pid is null then return; end if;
+  if not public.can_access_category(v_cat) then
+    raise exception 'No tienes permiso para modificar insumos de esta categoría';
+  end if;
+
+  delete from public.movements
+   where id in (select movement_id from public.movement_items where product_id = v_pid);
+
+  update public.inventory
+     set qnty = 0, last_counted_at = null, last_counted_by = null
+   where product_id = v_pid;
+end;
+$$;
+grant execute on function public.uncount_item(text) to authenticated;
+
+create or replace function public.delete_count(p_client_op_id text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_mid bigint; v_product_ids bigint[];
+begin
+  if public.current_role() not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para modificar el inventario';
+  end if;
+
+  select id into v_mid from public.movements where client_op_id = p_client_op_id;
+  if v_mid is null then return; end if;
+
+  select array_agg(product_id) into v_product_ids
+    from public.movement_items where movement_id = v_mid;
+
+  if exists (
+    select 1 from unnest(v_product_ids) pid
+    join public.products p on p.id = pid
+    where not public.can_access_category(p.category_id)
+  ) then
+    raise exception 'No tienes permiso para modificar insumos de esta categoría';
+  end if;
+
+  delete from public.movements where id = v_mid;
+
+  update public.inventory i set
+    last_counted_at = (
+      select max(m.occurred_at) from public.movements m
+      join public.movement_items mi on mi.movement_id = m.id
+      where mi.product_id = i.product_id),
+    last_counted_by = (
+      select m.note from public.movements m
+      join public.movement_items mi on mi.movement_id = m.id
+      where mi.product_id = i.product_id
+      order by m.occurred_at desc limit 1)
+  where i.product_id = any(v_product_ids);
+end;
+$$;
+grant execute on function public.delete_count(text) to authenticated;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  9b. EGRESO RÁPIDO — create_comanda_rapida (bitácora de salidas)
+--
+--  Hallazgo clave al revisar el frontend: Egreso Rápido NO usa apply_count.
+--  Genera un documento de negocio real (una `comanda` origen='rapida', ya
+--  'completada') con reserva de stock atómica (FOR UPDATE) para un carrito de
+--  varios ítems a la vez — apply_count es de un solo ítem (conteo físico),
+--  no sirve para esto. Sin esta RPC, Egreso Rápido queda sin forma de
+--  descontar stock ni dejar rastro en la Bitácora. Portado del original
+--  (UCVInventario/supabase/2026-07-30-egreso-rapido-autorizado-por-fix.sql)
+--  con 3 cambios: auth.uid() en vez de p_actor_ci, chequeo de categoría por
+--  ítem (coordinador solo puede egresar de su propia categoría), y destino
+--  resuelto por `ubicaciones.es_default_egreso` en vez del nombre
+--  hardcodeado "UCV Centro de Acopio" (GBSInventario ya no es UCV-específico).
+-- ══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.create_comanda_rapida(
+  p_solicitante_ci  bigint,
+  p_items           jsonb,   -- [{"product_id": bigint, "qnty": int}, ...]
+  p_client_op_id    text default null,
+  p_note            text default null
+) returns table(comanda_id bigint, movement_id bigint)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_role text; v_ci bigint; v_actor_nombre text; v_autorizado_por text;
+  v_ubicacion_id bigint; v_ubicacion_nombre text;
+  v_comanda_id bigint; v_movement_id bigint;
+  v_expected int; v_inserted int;
+  v_pid bigint; v_pname text; v_punidad text; v_pcat bigint; v_qty int; v_disponible int;
+  v_item jsonb;
+begin
+  v_role := public.current_role();
+  v_ci := public.current_person_ci();
+  if v_role not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para registrar una entrega';
+  end if;
+
+  -- Idempotencia: reintento con el mismo client_op_id devuelve el mismo resultado.
+  if p_client_op_id is not null then
+    select c.id into v_comanda_id from public.comandas c where c.client_op_id = p_client_op_id;
+    if found then
+      select m.id into v_movement_id from public.movements m where m.client_op_id = p_client_op_id;
+      return query select v_comanda_id, v_movement_id;
+      return;
+    end if;
+  end if;
+
+  if p_solicitante_ci is null or not exists (select 1 from public.persons where ci = p_solicitante_ci) then
+    raise exception 'El solicitante no existe';
+  end if;
+
+  v_expected := jsonb_array_length(p_items);
+  if v_expected is null or v_expected = 0 then
+    raise exception 'Agrega al menos un producto';
+  end if;
+
+  select (name || ' ' || surname) into v_actor_nombre from public.persons where ci = v_ci;
+  v_autorizado_por := v_actor_nombre || ' (Uso Interno)';
+
+  -- Destino SIEMPRE resuelto en el servidor (nunca aceptado del cliente).
+  select id, nombre into v_ubicacion_id, v_ubicacion_nombre
+    from public.ubicaciones
+   where es_default_egreso and deleted_at is null
+   limit 1;
+  if v_ubicacion_id is null then
+    raise exception 'No hay una ubicación marcada como destino por defecto de Egreso Rápido — un admin debe configurar una en Ubicaciones (es_default_egreso).';
+  end if;
+
+  insert into public.comandas (
+    solicitante_ci, estudiante_resp_ci, responsable_entrega_ci,
+    aprobado_por_ci, aprobado_por, created_by_ci, created_by,
+    ubicacion_id, fecha, hora_salida, hora_llegada,
+    status, origen, processed_at, notas, client_op_id, autorizado_por
+  ) values (
+    p_solicitante_ci, v_ci, v_ci,
+    v_ci, v_actor_nombre, v_ci, v_actor_nombre,
+    v_ubicacion_id, current_date, current_time, current_time,
+    'completada', 'rapida', now(), p_note, p_client_op_id, v_autorizado_por
+  ) returning id into v_comanda_id;
+
+  -- comanda_items + chequeo temprano de stock y categoría por ítem.
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    v_pid := (v_item->>'product_id')::bigint;
+    v_qty := (v_item->>'qnty')::int;
+
+    if v_pid is null or v_qty is null or v_qty <= 0 then
+      raise exception 'Ítem inválido en el carrito (producto o cantidad faltante)';
+    end if;
+
+    select p.name, p.unidad, p.category_id into v_pname, v_punidad, v_pcat
+      from public.products p where p.id = v_pid and p.deleted_at is null;
+    if not found then
+      raise exception 'Producto % no existe o fue eliminado', v_pid;
+    end if;
+    if not public.can_access_category(v_pcat) then
+      raise exception 'No tienes permiso para egresar insumos de esta categoría (%)', v_pname;
+    end if;
+
+    select qnty into v_disponible from public.inventory where product_id = v_pid for update;
+    if v_disponible is null or v_disponible < v_qty then
+      raise exception 'No hay suficiente disponibilidad de "%" (disponible: %, solicitado: %)',
+        v_pname, coalesce(v_disponible, 0), v_qty;
+    end if;
+
+    insert into public.comanda_items (comanda_id, producto, producto_id, cantidad, unidad)
+      values (v_comanda_id, v_pname, v_pid, v_qty, v_punidad);
+  end loop;
+
+  insert into public.movements (direction, destination, note, client_op_id, occurred_at, delivered_by)
+    values ('out', v_ubicacion_nombre, p_note, p_client_op_id, now(), v_ci)
+    returning id into v_movement_id;
+
+  update public.comandas set movement_id = v_movement_id where id = v_comanda_id;
+
+  insert into public.movement_items (movement_id, product_id, qnty)
+    select v_movement_id, (elem->>'product_id')::bigint, (elem->>'qnty')::int
+    from jsonb_array_elements(p_items) elem;
+  get diagnostics v_inserted = row_count;
+  if v_inserted <> v_expected then
+    raise exception 'create_comanda_rapida: % de % líneas no coincidieron con products', (v_expected - v_inserted), v_expected;
+  end if;
+
+  -- El pull incremental del cliente filtra por products.updated_at (no por
+  -- inventory) — sin esto, ningún cliente vería el stock nuevo hasta que
+  -- algo más, ajeno a este egreso, tocara esa misma fila de products.
+  update public.products up set updated_at = now()
+   where up.id in (select (elem->>'product_id')::bigint from jsonb_array_elements(p_items) elem);
+
+  return query select v_comanda_id, v_movement_id;
+end;
+$$;
+grant execute on function public.create_comanda_rapida(bigint, jsonb, text, text) to authenticated;
+
+-- Fusiona un insumo duplicado en otro ya existente (reatribuye TODO el
+-- historial de movement_items al destino, vacía y borra lógicamente el
+-- origen) — usado por "Renombrar" en Conteo cuando el nuevo nombre coincide
+-- con un insumo ya existente.
+create or replace function public.merge_product(
+  p_source_client_id text, p_target_client_id text
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_source bigint; v_target bigint; v_source_cat bigint; v_target_cat bigint;
+begin
+  if public.current_role() not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para fusionar insumos';
+  end if;
+
+  select id, category_id into v_source, v_source_cat from public.products where client_id = p_source_client_id;
+  select id, category_id into v_target, v_target_cat from public.products where client_id = p_target_client_id;
+  if v_source is null then raise exception 'Insumo de origen % no existe', p_source_client_id; end if;
+  if v_target is null then raise exception 'Insumo de destino % no existe', p_target_client_id; end if;
+  if not public.can_access_category(v_source_cat) or not public.can_access_category(v_target_cat) then
+    raise exception 'No tienes permiso para fusionar insumos de esta categoría';
+  end if;
+  if v_source = v_target then return; end if;
+
+  update public.movement_items set product_id = v_target where product_id = v_source;
+  update public.inventory set qnty = 0 where product_id = v_source;
+  update public.products set deleted_at = now(), updated_at = now() where id = v_source;
+end;
+$$;
+grant execute on function public.merge_product(text, text) to authenticated;
+
+-- Vista de búsqueda de "solicitante" para Egreso Rápido (persons + un campo
+-- de texto de la cédula para buscar por substring). Sin RLS propia — hereda
+-- la de `persons` (security_invoker, comportamiento estándar de una vista).
+create view public.persons_solicitantes with (security_invoker = true) as
+  select ci, name, surname, ci::text as ci_text from public.persons;
+
+-- Ubicaciones genéricas activas (destinos "herramienta" reutilizables, ej.
+-- la marcada es_default_egreso) — usada solo para mostrar el subtítulo
+-- "Entregando desde: X" en la UI, el destino real lo resuelve
+-- create_comanda_rapida del lado del servidor.
+create view public.ubicaciones_genericas_selectable with (security_invoker = true) as
+  select id, nombre, es_generica, es_default_egreso
+  from public.ubicaciones
+  where es_generica and deleted_at is null;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  10. DESPACHOS — vigente solo si/cuando GBSInventario tenga su propio
+--      flujo de comandas poblando `comandas`/`comanda_items` (sección 3).
+-- ══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.list_despachos_pendientes() returns table(
+  item_id        bigint,
+  comanda_id     integer,
+  producto       text,
+  cantidad       numeric,
+  unidad         text,
+  category_id    bigint,
+  solicitante    text,
+  solicitado_en  timestamptz
+)
+language plpgsql security definer set search_path = public as $$
+declare v_role text;
+begin
+  v_role := public.current_role();
+  if v_role not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para ver despachos';
+  end if;
+
+  return query
+    select
+      ci.id::bigint, c.id::integer, ci.producto::text, ci.cantidad::numeric, ci.unidad::text, pr.category_id,
+      coalesce(sp.name || ' ' || sp.surname, 'Sin solicitante')::text,
+      c.created_at::timestamptz
+    from public.comanda_items ci
+    join public.comandas c on c.id = ci.comanda_id
+    join public.products pr on pr.id = ci.producto_id
+    left join public.persons sp on sp.ci = c.solicitante_ci
+    where ci.despachado = false
+      and c.status = 'por_despachar'
+      and c.deleted_at is null
+      and public.can_access_category(pr.category_id)
+    order by c.created_at asc;
+end;
+$$;
+grant execute on function public.list_despachos_pendientes() to authenticated;
+
+create or replace function public.marcar_despacho_entregado(p_item_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_role text; v_ci bigint; v_actor_nombre text;
+  v_categoria bigint; v_comanda_id integer;
+  v_comanda_status public.comanda_status; v_pendientes integer;
+begin
+  v_role := public.current_role();
+  v_ci := public.current_person_ci();
+  if v_role not in ('admin', 'coordinador') then
+    raise exception 'Rol sin permiso para marcar despachos';
+  end if;
+
+  select name || ' ' || surname into v_actor_nombre from public.persons where ci = v_ci;
+
+  select pr.category_id, ci.comanda_id, c.status
+    into v_categoria, v_comanda_id, v_comanda_status
+  from public.comanda_items ci
+  join public.products pr on pr.id = ci.producto_id
+  join public.comandas c on c.id = ci.comanda_id
+  where ci.id = p_item_id
+  for update of ci;
+
+  if v_comanda_id is null then
+    raise exception 'Ítem de comanda no encontrado (o no pertenece a un producto del catálogo).';
+  end if;
+  if not public.can_access_category(v_categoria) then
+    raise exception 'No tienes permiso para despachar ítems de esta área.';
+  end if;
+  if v_comanda_status <> 'por_despachar' then
+    raise exception 'Esta comanda ya no está pendiente de despacho.';
+  end if;
+
+  update public.comanda_items
+     set despachado = true, despachado_por_ci = v_ci, despachado_por = v_actor_nombre, despachado_at = now()
+   where id = p_item_id and despachado = false;
+
+  select count(*) into v_pendientes
+    from public.comanda_items
+   where comanda_id = v_comanda_id and producto_id is not null and despachado = false;
+
+  if v_pendientes = 0 then
+    update public.comandas set status = 'despachada' where id = v_comanda_id;
+  end if;
+end;
+$$;
+grant execute on function public.marcar_despacho_entregado(bigint) to authenticated;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  11. ROW LEVEL SECURITY
+-- ══════════════════════════════════════════════════════════════════════════
+
+alter table public.categories enable row level security;
+alter table public.products enable row level security;
+alter table public.inventory enable row level security;
+alter table public.movements enable row level security;
+alter table public.movement_items enable row level security;
+alter table public.requests enable row level security;
+alter table public.checkpoints enable row level security;
+alter table public.comms enable row level security;
+alter table public.persons enable row level security;
+alter table public.phones enable row level security;
+alter table public.person_status enable row level security;
+alter table public.comandas_viejas enable row level security;
+alter table public.comandas enable row level security;
+alter table public.comanda_items enable row level security;
+alter table public.comanda_imagenes enable row level security;
+alter table public.product_aliases enable row level security;
+alter table public.municipios enable row level security;
+alter table public.parroquias enable row level security;
+alter table public.rutas_ejes enable row level security;
+alter table public.ubicaciones enable row level security;
+alter table public.ubicacion_contactos enable row level security;
+alter table public.ubicacion_imagenes enable row level security;
+alter table public.ubicacion_snapshots enable row level security;
+alter table public.conductores enable row level security;
+alter table public.conductor_vehiculos enable row level security;
+alter table public.conductor_dias enable row level security;
+alter table public.conductor_horarios enable row level security;
+alter table public.conductor_zonas enable row level security;
+alter table public.facultades enable row level security;
+alter table public.carreras enable row level security;
+alter table public.ucevistas enable row level security;
+alter table public.afectados enable row level security;
+
+-- 11.1 — Catálogo/inventario/movimientos: lectura filtrada por categoría —
+-- un coordinador de una categoría real (no 'general') SOLO ve/toca filas de
+-- SU categoría (pedido explícito: "un coordinador... solo debe tener acceso
+-- a la información de su categoría"); admin y coordinador de 'general' ven
+-- todo. inventory/movements/movement_items NO tienen policy de escritura
+-- para anon/authenticated a propósito — todo pasa por las RPCs SECURITY
+-- DEFINER de las secciones 9/9b, que corren con privilegios de owner y por
+-- lo tanto sí pueden escribir aunque no exista una policy para el rol que
+-- las invoca (y esas RPCs ya validan categoría por dentro, ver arriba).
+create policy products_select on public.products for select
+  to authenticated using (public.can_access_category(category_id));
+create policy products_insert on public.products for insert
+  to authenticated with check (
+    public.is_admin() or (public.current_role() = 'coordinador' and public.can_access_category(category_id))
+  );
+create policy products_update on public.products for update
+  to authenticated using (
+    public.is_admin() or (public.current_role() = 'coordinador' and public.can_access_category(category_id))
+  )
+  with check (
+    public.is_admin() or (public.current_role() = 'coordinador' and public.can_access_category(category_id))
+  );
+
+create policy inventory_select on public.inventory for select
+  to authenticated using (
+    exists (select 1 from public.products p where p.id = inventory.product_id and public.can_access_category(p.category_id))
+  );
+
+create policy movements_select on public.movements for select
+  to authenticated using (
+    public.is_admin() or public.current_area() = 'general' or exists (
+      select 1 from public.movement_items mi join public.products p on p.id = mi.product_id
+      where mi.movement_id = movements.id and p.category_id = public.current_category_id()
+    )
+  );
+
+create policy movement_items_select on public.movement_items for select
+  to authenticated using (
+    exists (select 1 from public.products p where p.id = movement_items.product_id and public.can_access_category(p.category_id))
+  );
+
+create policy requests_select on public.requests for select
+  to authenticated using (
+    exists (select 1 from public.products p where p.id = requests.product_id and public.can_access_category(p.category_id))
+  );
+
+-- comandas/comanda_items (Egreso Rápido, sección 9b) — mismo criterio:
+-- visibles si al menos un ítem cae en la categoría del coordinador. Sin
+-- policy de escritura: create_comanda_rapida/marcar_despacho_entregado son
+-- SECURITY DEFINER y validan categoría por dentro.
+create policy comandas_select on public.comandas for select
+  to authenticated using (
+    public.is_admin() or public.current_area() = 'general' or exists (
+      select 1 from public.comanda_items ci join public.products p on p.id = ci.producto_id
+      where ci.comanda_id = comandas.id and p.category_id = public.current_category_id()
+    )
+  );
+create policy comanda_items_select on public.comanda_items for select
+  to authenticated using (
+    exists (select 1 from public.products p where p.id = comanda_items.producto_id and public.can_access_category(p.category_id))
+  );
+
+-- categories: cualquier sesión lee (hace falta para poblar selects de área/
+-- categoría en toda la app); solo admin escribe directo — en la práctica se
+-- escribe vía las RPC de 8b, pero se deja la policy por si algo escribe REST.
+create policy categories_select on public.categories for select
+  to authenticated using (true);
+create policy categories_admin_write on public.categories for all
+  to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 11.2 — checkpoints: solo admin (mismo criterio que ya tenía la app,
+-- "Máquina del Tiempo" restringida a admin desde 2026-07-27).
+create policy checkpoints_all on public.checkpoints for all
+  to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 11.3 — comms: cualquier sesión publica/lee; sin `alcance` (sistema único).
+create policy comms_select on public.comms for select
+  to authenticated using (true);
+create policy comms_insert on public.comms for insert
+  to authenticated with check (true);
+create policy comms_update on public.comms for update
+  to authenticated using (true) with check (true);
+
+-- 11.4 — persons/phones: cualquier sesión autenticada puede leer (hace
+-- falta para buscadores de Egreso Rápido/Despachos/etc.); escribir directo
+-- queda reservado a admin (coordinador usa create_person/update_own_profile,
+-- SECURITY DEFINER, que sí validan alcance por dentro).
+create policy persons_select on public.persons for select
+  to authenticated using (true);
+create policy persons_admin_write on public.persons for all
+  to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create policy phones_select on public.phones for select
+  to authenticated using (true);
+create policy phones_insert on public.phones for insert
+  to authenticated with check (public.current_role() in ('admin', 'coordinador'));
+
+create policy person_status_select on public.person_status for select
+  to authenticated using (true);
+create policy person_status_write on public.person_status for all
+  to authenticated using (public.current_role() in ('admin', 'coordinador'))
+  with check (public.current_role() in ('admin', 'coordinador'));
+
+-- 11.5 — dominio ubicaciones/conductores/facultades (+ comandas_viejas,
+-- comanda_imagenes, product_aliases: satélites de comandas/products sin
+-- lógica de categoría propia): inerte hasta que GBSInventario extienda su
+-- propio flujo más allá de Egreso Rápido — política provisoria simple
+-- (lectura para cualquier sesión, escritura solo admin). `comandas`/
+-- `comanda_items` ya NO están acá — tienen policy real de categoría arriba
+-- (11.1), son tablas activas desde que existe create_comanda_rapida.
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'comandas_viejas', 'comanda_imagenes',
+    'product_aliases', 'municipios', 'parroquias', 'rutas_ejes',
+    'ubicaciones', 'ubicacion_contactos', 'ubicacion_imagenes', 'ubicacion_snapshots',
+    'conductores', 'conductor_vehiculos', 'conductor_dias', 'conductor_horarios', 'conductor_zonas',
+    'facultades', 'carreras', 'ucevistas', 'afectados'
+  ]
+  loop
+    execute format('create policy %I_select on public.%I for select to authenticated using (true)', t, t);
+    execute format('create policy %I_admin_write on public.%I for all to authenticated using (public.is_admin()) with check (public.is_admin())', t, t);
+  end loop;
+end $$;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  12. GRANTS de tabla — RLS filtra filas, pero sin el GRANT base ni
+--      `authenticated` puede ejecutar el statement. `anon` no recibe nada:
+--      GBSInventario ya no tiene una vista "sin sesión" (ver auth.js#
+--      hasPlatformAccess() del sistema viejo, que exigía login para TODO).
+-- ══════════════════════════════════════════════════════════════════════════
+
+grant usage on schema public to authenticated;
+grant select on all tables in schema public to authenticated;
+grant insert, update on
+  public.products, public.persons, public.phones, public.person_status,
+  public.comms, public.checkpoints, public.categories
+to authenticated;
+-- Solo checkpoints/categories tienen policy de DELETE (admin-only) — comms
+-- nunca la tuvo ni en el esquema viejo (sin flujo de "borrar comunicado" en
+-- la app), así que no se otorga acá (otorgarlo sin policy sería ruido: RLS
+-- lo bloquearía igual).
+grant delete on public.checkpoints, public.categories to authenticated;
+-- comandas/comanda_items NO reciben INSERT/UPDATE/DELETE directo — todo
+-- pasa por create_comanda_rapida/marcar_despacho_entregado (SECURITY
+-- DEFINER, sección 9b/10), igual criterio que inventory/movements/movement_items.
+grant insert, update, delete on
+  public.comandas_viejas, public.comanda_imagenes,
+  public.product_aliases, public.municipios, public.parroquias, public.rutas_ejes,
+  public.ubicaciones, public.ubicacion_contactos, public.ubicacion_imagenes, public.ubicacion_snapshots,
+  public.conductores, public.conductor_vehiculos, public.conductor_dias, public.conductor_horarios,
+  public.conductor_zonas, public.facultades, public.carreras, public.ucevistas, public.afectados
+to authenticated;

@@ -1,8 +1,9 @@
 // ── Comunicados — vista + controlador ─────────────────────
-// Puente compartido con UCVAcopio/UCVComandas (misma tabla `comms`,
-// new_schema_archive) — ver store.js. Cualquier usuario con acceso a esta
-// plataforma (admin/coordinador, ver auth.js) puede publicar; solo un admin
-// puede marcar un comunicado como resuelto.
+// Tabla propia (`comms`) — desde que GBSInventario se independizó ya no la
+// comparte con AcopioUCV/UCVComandas, así que no hay "alcance" que elegir:
+// todo comunicado es visible para cualquier sesión de este sistema.
+// Cualquier admin/coordinador puede publicar; solo un admin marca un
+// comunicado como resuelto.
 
 import { store } from '../store.js';
 import { modal } from '../components/modal.js';
@@ -10,15 +11,10 @@ import { toast } from '../components/toast.js';
 import { auth } from '../auth.js';
 import { uid, escHtml, timeAgo, catLabel } from '../helpers.js';
 
-// ── Autor automático + alcance (2026-07-28) ───────────────
-// "Publicado por" ya no es texto libre: se arma solo de la sesión activa. Un
+// "Publicado por" no es texto libre: se arma solo de la sesión activa. Un
 // admin no tiene área (siempre null) — de ahí el caso especial. Un
-// coordinador de Inventario tiene como área una de las 13 categorías de
-// insumos, o 'general' (coordinador sin categoría propia, ver
-// documentation/05-autenticacion.md) — ninguna llega nunca con
-// 'recepcion'/'sala situacional' (esas áreas quedan denegadas en esta
-// plataforma, ver auth.js#DENIED_COORD_AREAS), así que catLabel() alcanza
-// para todos los casos reales salvo 'general', que no está en CATS.
+// coordinador tiene como área el id de una categoría, o 'general'
+// (coordinador sin categoría propia).
 function _areaLabel() {
   if (auth.isAdmin()) return 'Administrador';
   const area = auth.area();
@@ -28,15 +24,6 @@ function _areaLabel() {
 
 function _computeAutor() {
   return `${auth.name() || 'Anónimo'} - ${_areaLabel()}`;
-}
-
-// Alcance por defecto para quien NO es admin: siempre 'toldos' — ningún
-// coordinador con acceso real a esta plataforma tiene área
-// 'recepcion'/'sala situacional' (platform-denied, ver auth.js), así que
-// nunca hay forma de terminar en otro alcance por accidente. Solo un admin
-// puede elegir 'general' (ver #cs, oculto para el resto).
-function _defaultAlcance() {
-  return 'toldos';
 }
 
 function _svg(paths, w = 14) {
@@ -124,15 +111,10 @@ async function resolveComm(id) {
 }
 
 // Prepara el modal cada vez que se abre: autor recalculado (por si cambió de
-// cuenta en el mismo dispositivo) y el selector de alcance solo visible para
-// admin — el resto nunca elige, su alcance sale de _defaultAlcance().
+// cuenta en el mismo dispositivo).
 function _openNewCommModal() {
   const autorEl = document.getElementById('ca');
   if (autorEl) autorEl.value = _computeAutor();
-  const row = document.getElementById('cs-row');
-  const sel = document.getElementById('cs');
-  if (row) row.style.display = auth.isAdmin() ? '' : 'none';
-  if (sel) sel.value = 'general';
   modal.open('m-comm');
 }
 
@@ -164,9 +146,6 @@ export function initComunicados() {
 
   document.querySelector('#m-comm [data-action="save-comm"]')?.addEventListener('click', async () => {
     try {
-      const alcance = auth.isAdmin()
-        ? (document.getElementById('cs')?.value || 'general')
-        : _defaultAlcance();
       await store.saveCommunication({
         id:      uid(),
         titulo:  document.getElementById('ct').value.trim(),
@@ -174,7 +153,6 @@ export function initComunicados() {
         cuerpo:  document.getElementById('cb').value.trim(),
         autor:   _computeAutor(),
         activo:  true,
-        alcance,
         fecha:   Date.now(),
       });
       modal.close('m-comm');
@@ -198,9 +176,7 @@ function _updateBadge() {
 // ── Notificación de comunicados nuevos (sondeo cada 25s) ──────────────
 // Mismo patrón que views/despachos.js: `_seenIds` arranca `null` (primera
 // lectura tras cargar la página establece la línea base sin avisar del
-// backlog completo); lo que aparece DESPUÉS dispara un toast. El fetch ya
-// viene filtrado por alcance (general/toldos), así que un comunicado de otro
-// sistema nunca llega hasta acá.
+// backlog completo); lo que aparece DESPUÉS dispara un toast.
 let _seenIds = null;
 
 function _checkNuevos() {

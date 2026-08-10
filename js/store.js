@@ -4,19 +4,25 @@ import { db }                    from './db.js';
 import { sync, tombstones }      from './sync.js';
 import { auth }                  from './auth.js';
 import { CATALOGO }       from './seed.js';
-import { nowISO, uid, normSearch, catLabel } from './helpers.js';
-import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+import { nowISO, uid, normSearch, catLabel, setCategories, allCategories } from './helpers.js';
+import { SUPABASE_URL } from './config.js';
 import { DB_SCHEMA } from './env-config.js';
 
 function _commHeaders(extra = {}) {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
+  return auth.authHeaders({
     'Accept-Profile': DB_SCHEMA,
     'Content-Profile': DB_SCHEMA,
     ...extra,
-  };
+  });
+}
+
+async function _rpc(name, body) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method: 'POST', headers: _commHeaders(), body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.message || data?.hint || 'Error de servidor');
+  return data;
 }
 
 // Etiqueta "Nombre · Área" (o "Nombre · Administrador") para atribuir cada
@@ -34,11 +40,52 @@ function _conTag(nombre) {
 export const store = {
   items: [],          // catálogo con cantidad contada
   logs: [],           // bitácora de registros de conteo (append-only)
+  categories: [],      // [{id, nombre}] — categorías vigentes (dinámicas, ver helpers.js)
   contadorNombre: '',
+
+  // ── Categorías (dinámicas — creadas/editadas/borradas por el admin) ────
+  // item.categoria guarda el `id` de la categoría (no un string fijo como
+  // antes): helpers.js#catLabel/catColor lo resuelven contra este mapa.
+  async loadCategories() {
+    if (!navigator.onLine) return this.categories;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/categories?select=id,nombre&order=nombre.asc`, { headers: _commHeaders() });
+      if (!res.ok) return this.categories;
+      this.categories = await res.json();
+      setCategories(this.categories);
+    } catch { /* sin red: se queda con lo último cargado (o vacío al inicio) */ }
+    return this.categories;
+  },
+
+  async createCategory(nombre) {
+    const id = await _rpc('create_category', { p_nombre: nombre });
+    await this.loadCategories();
+    return id;
+  },
+  async renameCategory(id, nombre) {
+    await _rpc('update_category', { p_id: id, p_nombre: nombre });
+    await this.loadCategories();
+  },
+  async deleteCategory(id) {
+    await _rpc('delete_category', { p_id: id });
+    await this.loadCategories();
+  },
+  // Admin-only del lado del servidor (ver update_product_category en el
+  // esquema) — reasigna la categoría de un producto ya existente.
+  async setProductCategory(itemId, categoryId) {
+    const it = this.find(itemId);
+    if (!it || it.db_id == null) throw new Error('Insumo sin sincronizar todavía — espera a que suba antes de reasignar su categoría.');
+    await _rpc('update_product_category', { p_product_id: it.db_id, p_category_id: categoryId });
+    it.categoria = categoryId;
+    it.updated_at = nowISO();
+    await db.put(it);
+    return it;
+  },
 
   // ── Carga inicial ───────────────────────────────────────
   async init() {
     this.contadorNombre = localStorage.getItem('ucv-inv-contador') || '';
+    if (sync.enabled) await this.loadCategories();
 
     // Un insumo fusionado en la nube no debe volver a sembrarse desde seed.js.
     const muertos = tombstones();
@@ -93,8 +140,8 @@ export const store = {
   // que el resto del sistema (ver 05-autenticacion.md).
   visibleItems() {
     if (auth.isCoordinador() && !auth.isGeneral()) {
-      const area = auth.area();
-      return this.items.filter(i => i.categoria === area);
+      const area = auth.area();   // id de categoría (string) — ver js/auth.js
+      return this.items.filter(i => String(i.categoria) === String(area));
     }
     return this.items;
   },
@@ -178,9 +225,12 @@ export const store = {
   },
 
   // ── Crear un insumo nuevo (no estaba en el catálogo) ────
-  async addNuevo({ nombre, categoria = 'alimentos_no_perecederos', unidad = 'und', umbral = 0, cantidad = 0 }) {
+  // `categoria` es el id de una categoría existente (store.categories) —
+  // ya no hay default fijo: sin categorías dinámicas cargadas no hay forma
+  // de adivinar una razonable, el llamador (ingresorapido.js) debe mandarla.
+  async addNuevo({ nombre, categoria, unidad = 'und', umbral = 0, cantidad = 0 }) {
     nombre = (nombre || '').trim();
-    if (!nombre) return null;
+    if (!nombre || categoria == null) return null;
     let item = this.items.find(i => normSearch(i.nombre) === normSearch(nombre));
     if (item) {
       item.categoria = categoria;
@@ -264,7 +314,7 @@ export const store = {
         id: logId,
         item_id: fallback.item_id,
         nombre: fallback.nombre || '',
-        categoria: fallback.categoria || 'alimentos_no_perecederos',
+        categoria: fallback.categoria ?? null,
         unidad: fallback.unidad || 'und',
         cantidad: fallback.cantidad,
         ts: fallback.ts || nowISO(),
@@ -353,7 +403,7 @@ export const store = {
   csv() {
     const head = ['nombre', 'categoria', 'unidad', 'cantidad', 'contado_por'];
     return [head.join(','), ...this.visibleItems().filter(i => !i.deleted_at).map(i => [
-      `"${i.nombre}"`, i.categoria, i.unidad, i.cantidad, `"${i.contado_por || ''}"`
+      `"${i.nombre}"`, `"${catLabel(i.categoria)}"`, i.unidad, i.cantidad, `"${i.contado_por || ''}"`
     ].join(','))].join('\n');
   },
 
@@ -371,14 +421,13 @@ export const store = {
     if (!data.cuerpo?.trim()) throw new Error('El mensaje es obligatorio');
   },
 
-  // Alcance (2026-07-28): UCVInventario es el sistema "toldos" — solo ve
-  // comunicados 'general'/'toldos', nunca 'recepcion'/'sala_situacional'
-  // (filtrado en la propia consulta; columna + RPC nuevos vía migración
-  // compartida, ver UCVAcopio/supabase/20-comunicados-alcance-2026-07-28.sql).
-  // No depende del rol de quien mira.
+  // Ya no hay `alcance` que filtrar: GBSInventario dejó de compartir `comms`
+  // con AcopioUCV/UCVComandas al independizarse (ver supabase/new-project-
+  // schema.sql, nota de la revisión 1) — todo comunicado es visible para
+  // cualquier sesión de este sistema.
   async loadCommunications() {
     if (!navigator.onLine) throw new Error('Offline');
-    const url = `${SUPABASE_URL}/rest/v1/comms?select=*&alcance=in.(general,toldos)&order=created_at.desc`;
+    const url = `${SUPABASE_URL}/rest/v1/comms?select=*&order=created_at.desc`;
     const res = await fetch(url, { headers: _commHeaders() });
     if (!res.ok) throw new Error(`No se pudieron cargar comunicados (${res.status})`);
     const rows = await res.json();
@@ -389,31 +438,30 @@ export const store = {
       urgencia: r.urgencia,
       autor:    r.autor,
       activo:   r.activo,
-      alcance:  r.alcance,
       fecha:    r.created_at,
     }));
   },
 
-  // Publicar/editar vía RPC save_comunicado (SECURITY DEFINER, exige sesión
-  // válida) — mismo endpoint compartido que usa UCVAcopio, hace upsert por
-  // `id` así que no hace falta distinguir crear/editar acá. Llama al overload
-  // de 8 parámetros (con p_alcance).
+  // Insert/update directo por REST (upsert por `id`) — el esquema nuevo ya
+  // no tiene una RPC save_comunicado compartida con los sistemas hermanos;
+  // `comms` tiene RLS con policy abierta a cualquier sesión autenticada
+  // (ver supabase/new-project-schema.sql §11.3), no hace falta una RPC
+  // SECURITY DEFINER solo para esto.
   async saveCommunication(data) {
     this._validateCommunication(data);
     if (!navigator.onLine) throw new Error('Offline');
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/save_comunicado`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/comms?on_conflict=id`, {
       method: 'POST',
-      headers: _commHeaders(),
+      headers: _commHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
       body: JSON.stringify({
-        p_actor_ci: auth.ci(),
-        p_id:       data.id || uid(),
-        p_titulo:   data.titulo,
-        p_cuerpo:   data.cuerpo,
-        p_urgencia: data.urgencia,
-        p_autor:    data.autor,
-        p_activo:   data.activo,
-        p_alcance:  data.alcance || 'general',
+        id:       data.id || uid(),
+        titulo:   data.titulo,
+        cuerpo:   data.cuerpo,
+        urgencia: data.urgencia,
+        autor:    data.autor,
+        activo:   data.activo,
+        fecha:    data.fecha ?? Date.now(),
       }),
     });
 

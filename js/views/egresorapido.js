@@ -14,9 +14,9 @@
 
 import { store } from '../store.js';
 import { sync } from '../sync.js';
-import { auth } from '../auth.js';
 import { db } from '../db.js';
-import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { auth } from '../auth.js';
+import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
 import { escHtml, normSearch, uid, nowISO } from '../helpers.js';
 import { toast } from '../components/toast.js';
@@ -39,14 +39,11 @@ const PHONE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
 const CATEGORIAS = ['Externo', 'Voluntario', 'Medico', 'Rescatista', 'Conductor'];
 
 function _headers(extra = {}) {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
+  return auth.authHeaders({
     'Accept-Profile': DB_SCHEMA,
     'Content-Profile': DB_SCHEMA,
     ...extra,
-  };
+  });
 }
 
 // El botón "Confirmar entrega" depende de sync.online. sync.onChange se
@@ -102,14 +99,14 @@ export function closeEgreso() {
   _paint();
 }
 
-// Puramente cosmético (mostrar "Entregando desde: X"): la RPC create_comanda_rapida
-// fija el destino real del lado del servidor a "UCV Centro de Acopio" siempre — hay
-// más de una ubicación genérica activa (ej. "Personal"), así que hay que filtrar por
-// nombre exacto acá también, no tomar "la primera" como antes.
+// Puramente cosmético (mostrar "Entregando desde: X"): la RPC
+// create_comanda_rapida resuelve el destino real del lado del servidor a la
+// ubicación marcada `es_default_egreso` (configurable por cada organización
+// en Ubicaciones — ya no un nombre hardcodeado tipo "UCV Centro de Acopio").
 async function _fetchUbicacionGenerica() {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/ubicaciones_genericas_selectable?select=nombre&nombre=eq.UCV%20Centro%20de%20Acopio&limit=1`,
+      `${SUPABASE_URL}/rest/v1/ubicaciones_genericas_selectable?select=nombre&es_default_egreso=eq.true&limit=1`,
       { headers: _headers() }
     );
     if (!res.ok) return;
@@ -333,10 +330,9 @@ async function _searchSolicitantes(q, box) {
   });
 }
 
-// Equivalente al modal "Nueva Persona" de UCVComandas (openPersonQuickAddModal
-// sin lockCategoria, tal como lo usa su propia Entrega Rápida) — pero como
-// Inventario no tiene backend, llama directo a la RPC create_persona_rapida
-// en vez de POST /voluntarios. Nunca crea person_credentials (sin ingreso).
+// Crea una persona SIN inicio de sesión (RPC create_person, ver
+// supabase/new-project-schema.sql §8) — un solicitante no necesita cuenta,
+// solo existir en `persons` para poder elegirlo como destinatario.
 async function _crearPersonaRapida() {
   const ci = parseInt(_host.querySelector('#eg-pqa-ci')?.value, 10);
   const nombre = _host.querySelector('#eg-pqa-nombre')?.value.trim();
@@ -352,16 +348,15 @@ async function _crearPersonaRapida() {
   const btn = _host.querySelector('#eg-pqa-save');
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_persona_rapida`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_person`, {
       method: 'POST',
       headers: _headers(),
       body: JSON.stringify({
-        p_actor_ci: auth.ci(),
         p_ci: ci,
-        p_nombre: nombre,
-        p_apellido: apellido,
-        p_telefono_prefijo: prefijo,
-        p_telefono_numero: numero,
+        p_name: nombre,
+        p_surname: apellido,
+        p_phone_company_code: prefijo,
+        p_phone_number: numero,
         p_categoria: categoria,
       }),
     });
@@ -379,7 +374,7 @@ async function _crearPersonaRapida() {
     toast.ok('Persona guardada.');
     _paint();
   } catch (e) {
-    console.error('create_persona_rapida', e);
+    console.error('create_person', e);
     toast.err('Sin conexión — no se pudo registrar la persona.');
     if (btn) btn.disabled = false;
   }
@@ -456,7 +451,6 @@ async function _submit() {
   if (!_pendingOpId) _pendingOpId = uid();
 
   const payload = {
-    p_actor_ci: auth.ci(),
     p_solicitante_ci: _solicitante.ci,
     p_items: items,
     p_client_op_id: _pendingOpId,

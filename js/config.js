@@ -1,5 +1,5 @@
 // ============================================================
-// UCVInventario · Configuración de Supabase
+// GBSInventario · Configuración de Supabase
 // ------------------------------------------------------------
 // Proyecto compartido con UCVAcopio/UCVComandas (fndrmxjykrtoddhstbyv),
 // esquema new_schema_archive (ver js/env-config.js). Antes de la

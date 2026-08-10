@@ -6,8 +6,8 @@ import { SUPABASE_URL, SUPABASE_KEY, SYNC_ENABLED } from './config.js';
 import { DB_SCHEMA } from './env-config.js';
 import { db } from './db.js';
 import { store } from './store.js';
-import { auth } from './auth.js';
-import { uid, CATS } from './helpers.js';
+import { auth, supabaseClient } from './auth.js';
+import { uid } from './helpers.js';
 import { explicarHTTP, explicarRed } from './errors.js';
 import { toast } from './components/toast.js';
 
@@ -69,25 +69,17 @@ function addTombstone(clientId) {
   localStorage.setItem(TOMB_KEY, JSON.stringify([...t]));
 }
 
-// `categoria` (frontend) y `type` (columna de products en new_schema_archive)
-// son el mismo string desde el rename del enum a español (2026-07-03) — esta
-// función ya no traduce nada, solo valida y aplica un default si llega un
-// valor que no es ninguna de las 13 categorías vigentes.
-function catToType(cat) { return CATS[cat] ? cat : 'alimentos_no_perecederos'; }
-export function typeToCat(type) { return CATS[type] ? type : 'alimentos_no_perecederos'; }
-
-// Sin JWT (decisión de arquitectura, ver 00-plan-general.md §2): siempre la
-// anon key. Accept-Profile/Content-Profile enrutan contra new_schema_archive
-// (PostgREST usa el que aplica según el verbo; da igual mandar ambos siempre).
+// El access_token real de la sesión (no solo la anon key) — auth.uid() del
+// lado del servidor y las políticas RLS `to authenticated` de
+// supabase/new-project-schema.sql dependen de esto. Accept-Profile/
+// Content-Profile enrutan contra el esquema configurado (PostgREST usa el
+// que aplica según el verbo; da igual mandar ambos siempre).
 function _headers(extra = {}) {
-  return {
-    apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
+  return auth.authHeaders({
     'Accept-Profile': DB_SCHEMA,
     'Content-Profile': DB_SCHEMA,
     ...extra,
-  };
+  });
 }
 
 // ¿El error impide reintentar para siempre? 401/403 (permiso o sesión), 408/429
@@ -112,7 +104,7 @@ function _opItem(op) {
 }
 
 function productPayload(item) {
-  return { client_id: item.id, name: item.nombre, type: catToType(item.categoria),
+  return { client_id: item.id, name: item.nombre, category_id: item.categoria,
     unidad: item.unidad || 'und', umbral: item.umbral || 0,
     deleted_at: item.deleted_at || null };
 }
@@ -248,27 +240,31 @@ export const sync = {
       // que a partir de ahí se conserva el orden global por seguridad.
       if (bloqueoTotal || (item && bloqueados.has(item))) continue;
 
+      // Sin p_actor_ci/p_counted_by: el esquema nuevo (supabase/new-project-
+      // schema.sql §9) resuelve el actor vía auth.uid() del lado del
+      // servidor, nunca de un parámetro que manda el cliente — solo
+      // funciona con una sesión real de Supabase Auth (ver nota de
+      // store.js#_rpc), pendiente hasta la migración de auth.js.
       let endpoint, body;
       if (op.table === 'conteo') {
         const p = op.payload;
         const delta = p.deleted_at ? -p.cantidad : p.cantidad;
         endpoint = 'apply_count';
-        body = { p_actor_ci: auth.ci(), p_client_op_id: op.id, p_product_client_id: p.item_id,
-                 p_delta: delta, p_counted_by: p.contado_por || null };
+        body = { p_client_op_id: op.id, p_product_client_id: p.item_id, p_delta: delta };
       } else if (op.table === 'uncount') {
         endpoint = 'uncount_item';
-        body = { p_actor_ci: auth.ci(), p_product_client_id: op.payload.item_id };
+        body = { p_product_client_id: op.payload.item_id };
       } else if (op.table === 'merge') {
         // Reatribuye el historial del insumo absorbido (Renombrar → fusionar
         // con uno existente) al destino — ver
         // supabase/2026-08-03-merge-product-history.sql. Idempotente: un
         // reintento no rompe nada aunque el origen ya haya quedado fusionado.
         endpoint = 'merge_product';
-        body = { p_actor_ci: auth.ci(), p_source_client_id: op.payload.source_item_id,
+        body = { p_source_client_id: op.payload.source_item_id,
                  p_target_client_id: op.payload.target_item_id };
       } else { // delcount
         endpoint = 'delete_count';
-        body = { p_actor_ci: auth.ci(), p_client_op_id: op.payload.client_op_id };
+        body = { p_client_op_id: op.payload.client_op_id };
       }
 
       try {
@@ -308,7 +304,7 @@ export const sync = {
   async deleteCount(clientOpId) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/delete_count`, {
       method: 'POST', headers: _headers(),
-      body: JSON.stringify({ p_actor_ci: auth.ci(), p_client_op_id: clientOpId }),
+      body: JSON.stringify({ p_client_op_id: clientOpId }),
     });
     return res.ok;
   },
@@ -323,7 +319,7 @@ export const sync = {
     let remote = [], from = 0, limit = 1000;
     while (true) {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?updated_at=gt.${encodeURIComponent(fetchSince)}&select=id,client_id,name,type,unidad,umbral,updated_at,deleted_at,inventory(qnty,last_counted_at,last_counted_by)`,
+        `${SUPABASE_URL}/rest/v1/products?updated_at=gt.${encodeURIComponent(fetchSince)}&select=id,client_id,name,category_id,unidad,umbral,updated_at,deleted_at,inventory(qnty,last_counted_at,last_counted_by)`,
         { headers: _headers({ Range: `${from}-${from + limit - 1}` }) }
       );
       if (!res.ok) { this._fallo(res.status, await res.text()); throw new Error(`HTTP ${res.status} pull`); }
@@ -358,7 +354,7 @@ export const sync = {
           item = {
              id: p.client_id,
              nombre: p.name,
-             categoria: typeToCat(p.type), unidad: p.unidad || 'und', umbral: p.umbral || 0,
+             categoria: p.category_id, unidad: p.unidad || 'und', umbral: p.umbral || 0,
              cantidad: 0, contado: false, contado_por: null, updated_at: p.updated_at
           };
           store.items.push(item);
@@ -389,7 +385,7 @@ export const sync = {
         db_id: p.id,
         id: p.client_id,
         nombre: p.name,
-        categoria: typeToCat(p.type),
+        categoria: p.category_id,
         unidad: p.unidad || local?.unidad || 'und',
         umbral: p.umbral ?? (local?.umbral ?? 10),
         cantidad: pendiente ? (local?.cantidad ?? qnty) : qnty,
@@ -456,13 +452,13 @@ export const sync = {
 
   // Inicializa el WebSocket. Requiere que 'inventory' y 'products' estén en la
   // publicación supabase_realtime (ver supabase/realtime-migration.sql).
+  // Reusa el cliente compartido de auth.js — no crea uno propio (evitar dos
+  // GoTrue gestionando la misma sesión por separado).
   listenRealtime() {
-    if (!window.supabase || !SYNC_ENABLED) return;
+    if (!supabaseClient || !SYNC_ENABLED) return;
     if (this._realtimeChannel) return;
 
-    this._rtClient ||= window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-    const chan = this._rtClient.channel('db-changes');
+    const chan = supabaseClient.channel('db-changes');
     for (const table of ['inventory', 'products']) {
       chan.on('postgres_changes', { event: '*', schema: DB_SCHEMA, table },
         () => this.runDebounced());   // señal de invalidación → ciclo offline-first
@@ -483,7 +479,7 @@ export const sync = {
 
   stopRealtime() {
     if (!this._realtimeChannel) return;
-    try { this._rtClient?.removeChannel(this._realtimeChannel); } catch {}
+    try { supabaseClient?.removeChannel(this._realtimeChannel); } catch {}
     this._realtimeChannel = null;
   },
 

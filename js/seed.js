@@ -1,5 +1,5 @@
 // ============================================================
-// UCVInventario · Catalogo semilla (conteo fisico)
+// GBSInventario · Catalogo semilla (conteo fisico)
 // ------------------------------------------------------------
 // 1674 insumos importados desde la BD de AcopioUCV
 // (snapshot 2026-07-06).
