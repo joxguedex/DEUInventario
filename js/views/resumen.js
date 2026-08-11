@@ -10,6 +10,7 @@
 
 import { store } from '../store.js';
 import { escHtml, catLabel, catColor, timeAgo } from '../helpers.js';
+import { APP_NAME_BOLD, HERO_DESCRIPTION } from '../branding.js';
 
 let _root = null;
 let _usuariosActivos = null; // cache en memoria — countActiveUsers() es admin/coordinador-only
@@ -69,6 +70,29 @@ function _paint() {
 
   _root.innerHTML = `
     <div class="stats-wrap">
+      <div class="hero">
+        <div class="hero-wm" aria-hidden="true">${escHtml(APP_NAME_BOLD)}</div>
+        <div class="hero-left">
+          <div class="hero-eyebrow">Estado del Centro</div>
+          <div class="hero-h">
+            <span class="hl-fill">Centro</span>
+            <span class="hl-outline">Operativo</span>
+          </div>
+          <div class="hero-sub">${escHtml(HERO_DESCRIPTION)}</div>
+          <div class="hero-pills">
+            <div class="hero-pill"><span class="hero-pill-n" id="rsm-hero-vols">–</span>usuarios activos</div>
+            <div class="hero-pill"><span class="hero-pill-n">${criticos.toLocaleString('es-VE')}</span>bajo umbral</div>
+            <div class="hero-pill"><span class="hero-pill-n">${store.activeCommunications.length.toLocaleString('es-VE')}</span>avisos</div>
+          </div>
+        </div>
+        <div class="hero-right">
+          <div class="hr-dot"></div>
+          <div class="hr-ring"></div>
+          <div class="hr-ring"></div>
+          <div class="hr-ring"></div>
+        </div>
+      </div>
+
       <div class="stats-cards">
         <div class="stat-card stat-card-total"><div class="stat-card-num">${s.unidades.toLocaleString('es-VE')}</div><div class="stat-card-lbl">unidades</div></div>
         <div class="stat-card"><div class="stat-card-num">${store.categories.length.toLocaleString('es-VE')}</div><div class="stat-card-lbl">categorías</div></div>
@@ -117,6 +141,9 @@ function _paint() {
 }
 
 function _paintUsuariosActivos() {
-  const el = _root?.querySelector('#rsm-usuarios-activos');
-  if (el) el.textContent = _usuariosActivos == null ? '–' : _usuariosActivos.toLocaleString('es-VE');
+  const txt = _usuariosActivos == null ? '–' : _usuariosActivos.toLocaleString('es-VE');
+  const el  = _root?.querySelector('#rsm-usuarios-activos');
+  const pill = _root?.querySelector('#rsm-hero-vols');
+  if (el) el.textContent = txt;
+  if (pill) pill.textContent = txt;
 }

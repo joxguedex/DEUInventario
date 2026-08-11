@@ -10,7 +10,7 @@ import { renderRegistro } from './views/registro.js';
 import { renderIngresos, refreshIngresos } from './views/ingresos.js';
 import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
-import { renderDespachos, initDespachosWatcher } from './views/despachos.js';
+import { renderDespachos } from './views/despachos.js';
 import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
 import { renderEgresoRapido, openEgreso } from './views/egresorapido.js';
 import { initAdmin, renderLoginWall } from './views/admin.js';
@@ -18,6 +18,7 @@ import { initComunicados, refreshComunicados } from './views/comunicados.js';
 import { modal } from './components/modal.js';
 import { toast } from './components/toast.js';
 import { APP_VERSION } from './version.js';
+import { APP_NAME_BOLD, APP_NAME_REST, APP_TITLE } from './branding.js';
 
 const pages = {
   conteo:   document.getElementById('page-conteo'),
@@ -208,6 +209,12 @@ async function updateSyncPill() {
 }
 
 async function boot() {
+  // Marca (js/branding.js) — sobrescribe el texto por defecto de index.html
+  // para que rebrandear solo requiera tocar ese archivo, no el HTML.
+  document.title = APP_TITLE;
+  ['brand-bold', 'brand-bold-m'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = APP_NAME_BOLD; });
+  ['brand-rest', 'brand-rest-m'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = APP_NAME_REST; });
+
   const badgeEl  = document.getElementById('version-badge');
   const badgeElM = document.getElementById('version-badge-m');
   if (badgeEl)  badgeEl.textContent  = APP_VERSION;
@@ -235,12 +242,6 @@ async function boot() {
 
   await auth.init();
   auth.onChange(checkAuth); // Si cierra sesión, vuelve al login
-  // Notificación de despachos nuevos + badge en la pestaña "Despachos":
-  // corre en segundo plano sin importar qué página esté activa (ver
-  // views/despachos.js) — arranca ya con `auth.init()` resuelto para que un
-  // coordinador con sesión restaurada desde localStorage tenga el badge
-  // correcto desde el primer render, no recién tras el próximo sondeo.
-  initDespachosWatcher();
 
   try { await store.init(); }
   catch (e) { console.error('init', e); toast.err('Error al cargar el catálogo.'); }
