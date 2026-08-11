@@ -225,6 +225,14 @@ async function boot() {
   document.querySelectorAll('.tn-item, .mbn-item').forEach(n =>
     n.addEventListener('click', () => nav(n.dataset.page)));
 
+  // Enlaces "Ver todo" (p.ej. Resumen → Insumos/Comunicados, portado de
+  // UCVAcopio/js/router.js) — delegado en document porque estos enlaces
+  // viven dentro de vistas que se repintan enteras (resumen.js).
+  document.addEventListener('click', e => {
+    const link = e.target.closest('[data-nav]');
+    if (link) nav(link.dataset.nav);
+  });
+
   await auth.init();
   auth.onChange(checkAuth); // Si cierra sesión, vuelve al login
   // Notificación de despachos nuevos + badge en la pestaña "Despachos":

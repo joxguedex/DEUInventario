@@ -795,6 +795,8 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .stats-panel-full{grid-column:1/-1}
 .stats-panel-title{display:flex;align-items:center;gap:8px;font-family:'Space Grotesk',sans-serif;font-size:.95rem;font-weight:700;color:var(--t1);margin-bottom:18px}
 .stats-panel-title small{color:var(--t4);font-size:11px;font-weight:400;margin-left:auto}
+.stats-panel-link{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:var(--amber-d);cursor:pointer;transition:color .14s;flex-shrink:0}
+.stats-panel-link:hover{color:var(--amber)}
 .stat-bar-row{margin-bottom:14px}
 .stat-bar-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
 .stat-bar-name{font-size:12px;color:var(--t2);font-weight:500;max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -802,6 +804,22 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .stat-bar-track{height:10px;background:var(--s2);border-radius:99px;overflow:hidden}
 .stat-bar-fill{height:100%;border-radius:99px;transition:width .4s ease}
 .stat-bar-sub{font-size:11px;color:var(--t4);margin-top:3px}
+
+/* ── Insumos por categoría (Resumen) — fila compacta de una sola línea:
+   punto + nombre/subtítulo | barra | número, portado 1:1 de
+   UCVAcopio/css/styles.css. Antes esta sección se veía mal (info arriba Y
+   abajo de la barra, sin separación clara entre filas, fuente más grande
+   que el resto del sistema) porque estas reglas nunca se habían agregado —
+   .stats-cat-row quedaba sin estilo, cada elemento caía en su propia línea. */
+.stats-cat-grid{display:flex;flex-direction:column;gap:12px}
+.stats-cat-row{display:grid;grid-template-columns:160px 1fr 70px;align-items:center;gap:12px}
+@media(max-width:600px){.stats-cat-row{grid-template-columns:120px 1fr 50px}}
+.stats-cat-info{display:flex;align-items:center;gap:10px;min-width:0}
+.stats-cat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.stats-cat-name{font-size:13px;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stats-cat-sub{font-size:11px;color:var(--t4)}
+.stats-cat-bar-wrap{flex:1;min-width:0}
+.stats-cat-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--t1);text-align:right}
 
 /* ═══ Herramientas admin del panel de Ingreso Rápido ═══════ */
 .qa-admin-tools{display:flex;flex-direction:column;gap:6px;margin-top:10px}

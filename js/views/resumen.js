@@ -3,15 +3,47 @@
 // Egresos): esas dos ya tienen su propio lugar (pestaña "Ingresos" nueva,
 // y "Egreso" es un filtro más en Bitácora) — acá queda un panorama general
 // de solo lectura: insumos/categorías/bajo umbral/usuarios activos, más el
-// desglose por categoría. La exportación a Excel/JSON y "Máquina del
-// Tiempo" se movieron al panel de Ingreso Rápido (admin-only, ver
+// desglose por categoría y los comunicados recientes (portado de
+// UCVAcopio/dashboard.js#d-comms). La exportación a Excel/JSON y "Máquina
+// del Tiempo" se movieron al panel de Ingreso Rápido (admin-only, ver
 // ingresorapido.js), que es de donde vienen en UCVAcopio.
 
 import { store } from '../store.js';
-import { escHtml, catLabel, catColor } from '../helpers.js';
+import { escHtml, catLabel, catColor, timeAgo } from '../helpers.js';
 
 let _root = null;
 let _usuariosActivos = null; // cache en memoria — countActiveUsers() es admin/coordinador-only
+
+function _svg(paths, w = 14) {
+  return `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;flex-shrink:0">${paths}</svg>`;
+}
+const ICO = {
+  alerta: _svg(`<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`),
+  clock:  _svg(`<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>`),
+  info:   _svg(`<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>`),
+  bellLg: `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>`,
+};
+
+// Vista previa de solo lectura de un comunicado (sin "Marcar resuelto" — esa
+// acción vive solo en la pestaña Comunicados, ver views/comunicados.js#tlItem).
+function _tlMini(c) {
+  const tc = c.urgencia === 'critico' ? 'tag-red' : c.urgencia === 'urgente' ? 'tag-amber' : 'tag-blue';
+  const tl = c.urgencia === 'critico' ? `${ICO.alerta} Crítico`
+           : c.urgencia === 'urgente' ? `${ICO.clock} Urgente`
+           : `${ICO.info} Info`;
+  return `<div class="tl-item ${c.urgencia}">
+    <div class="tl-dot"></div>
+    <div class="tl-card">
+      <div class="tl-top">
+        <span class="tag ${tc}">${tl}</span>
+        <span class="tl-title">${escHtml(c.titulo)}</span>
+        <span class="tl-time">${timeAgo(c.fecha)}</span>
+      </div>
+      <div class="tl-body">${escHtml(c.cuerpo)}</div>
+      <div class="tl-foot"><span class="tl-author">— ${escHtml(c.autor)}</span></div>
+    </div>
+  </div>`;
+}
 
 export function renderResumen(rootEl) {
   _root = rootEl;
@@ -31,6 +63,10 @@ function _paint() {
   const cats = Object.keys(bc).sort((a, b) => catLabel(a).localeCompare(catLabel(b), 'es'));
   const maxUnidades = Math.max(1, ...cats.map(c => bc[c].unidades));
 
+  const comms = [...store.activeCommunications]
+    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+    .slice(0, 3);
+
   _root.innerHTML = `
     <div class="stats-wrap">
       <div class="stats-cards">
@@ -41,7 +77,10 @@ function _paint() {
       </div>
 
       <div class="stats-panel">
-        <div class="stats-panel-title">Insumos por categoría <small>${s.unidades.toLocaleString('es-VE')} unidades en total</small></div>
+        <div class="stats-panel-title">
+          Insumos por categoría
+          <span class="stats-panel-link" data-nav="conteo">Ver todo →</span>
+        </div>
         ${cats.length ? `
         <div class="stats-cat-grid">
           ${cats.map(c => {
@@ -61,6 +100,16 @@ function _paint() {
             </div>`;
           }).join('')}
         </div>` : `<div class="empty"><div class="empty-title">Sin categorías todavía</div><div class="empty-txt">Un admin puede crear la primera desde Insumos.</div></div>`}
+      </div>
+
+      <div class="stats-panel">
+        <div class="stats-panel-title">
+          Comunicados recientes
+          <span class="stats-panel-link" data-nav="comunicados">Ver todos →</span>
+        </div>
+        ${comms.length
+          ? `<div class="timeline">${comms.map(_tlMini).join('')}</div>`
+          : `<div class="empty"><div class="empty-ico">${ICO.bellLg}</div><div class="empty-title">Sin comunicados activos</div></div>`}
       </div>
     </div>`;
 

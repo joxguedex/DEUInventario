@@ -163,14 +163,14 @@ function _body() {
         </div>
         <input class="qa-new-name" id="qa-new-umbral" type="number" inputmode="numeric" min="0" placeholder="Umbral de alerta (mín. deseado)" value="10">
         <input class="qa-qty" id="qa-new-qty" type="number" inputmode="numeric" min="0" placeholder="Cantidad contada">
-        <button class="qa-add-btn" id="qa-new-ok">Crear y contar</button>
+        <button class="qa-add-btn" id="qa-new-ok">Crear y sumar</button>
         <button class="qa-link" id="qa-back">← cancelar</button>
       </div>`;
   }
   return `
     <div class="qa-searchbox">
       <svg class="qa-search-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="qa-search" placeholder="¿Qué contaste?" autocomplete="off">
+      <input id="qa-search" placeholder="¿Qué recibiste?" autocomplete="off">
     </div>
     <div class="qa-sugg" id="qa-sugg"></div>
     <div class="qa-hint">Escribe un insumo, pon la cantidad y listo. Se puede sumar varias veces.</div>`;
