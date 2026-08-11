@@ -6,7 +6,7 @@ import { auth }  from './auth.js';
 import { db }    from './db.js';
 import { checkpoints } from './checkpoints.js';
 import { renderConteo, renderTop, renderList, refreshItem, syncView } from './views/conteo.js';
-import { renderRegistro } from './views/registro.js';
+import { renderRegistro, focusRegistro } from './views/registro.js';
 import { renderIngresos, refreshIngresos } from './views/ingresos.js';
 import { renderEgresos, refreshEgresos } from './views/egresos.js';
 import { renderResumen }  from './views/resumen.js';
@@ -32,7 +32,7 @@ const pages = {
   voluntarios: document.getElementById('page-voluntarios'),
 };
 const TITLES = {
-  conteo: 'Insumos', registro: 'Bitácora', ingresos: 'Ingresos', egresos: 'Egresos', resumen: 'Resumen',
+  conteo: 'Insumos', registro: 'Historial', ingresos: 'Ingresos', egresos: 'Egresos', resumen: 'Resumen',
   despachos: 'Despachos Pendientes', comunicados: 'Comunicados y Necesidades',
   voluntarios: 'Gestión de Accesos',
 };
@@ -249,10 +249,19 @@ async function boot() {
 
   // Enlaces "Ver todo" (p.ej. Resumen → Insumos/Comunicados, portado de
   // UCVAcopio/js/router.js) — delegado en document porque estos enlaces
-  // viven dentro de vistas que se repintan enteras (resumen.js).
+  // viven dentro de vistas que se repintan enteras (resumen.js). La flecha
+  // "Ver en Historial" de las tarjetas de Ingresos/Egresos usa el mismo
+  // mecanismo, sumando data-tipo/data-date para preseleccionar el filtro y
+  // desplazarse hasta el día correspondiente una vez cargado.
   document.addEventListener('click', e => {
     const link = e.target.closest('[data-nav]');
-    if (link) nav(link.dataset.nav);
+    if (!link) return;
+    const target = link.dataset.nav;
+    nav(target).then(() => {
+      if (target === 'registro' && (link.dataset.tipo || link.dataset.date)) {
+        focusRegistro(link.dataset.tipo, link.dataset.date);
+      }
+    });
   });
 
   await auth.init();

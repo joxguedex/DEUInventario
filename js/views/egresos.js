@@ -1,13 +1,16 @@
 // ── Vista de Egresos — desglose diario de entregas ────────
-// Copia el formato de views/ingresos.js (mismo layout de tarjetas por día +
-// modal de detalle), pero la fuente de datos es comanda_items/comandas en
-// vez de movement_items/movements: cada Egreso Rápido genera una comanda
-// (origen='rapida', ver egresorapido.js) y comanda_items ya trae
-// producto/cantidad denormalizados sin necesitar reconstruir el tag de
-// movements.note. comandas.notas es el "Destino" de texto libre que el
-// usuario escribe al armar el egreso (reemplazó al selector de Solicitante,
-// ver egresorapido.js) — es el dato central de este reporte, por eso se
-// muestra en el detalle de cada registro.
+// Copia el formato Y la fuente de datos de views/ingresos.js (mismo layout
+// de tarjetas por día + modal de detalle, mismo movement_items/movements
+// con products embebido) en vez de comanda_items/comandas — a propósito:
+// comanda_items.producto/producto_id son una foto fija del momento en que
+// se creó la comanda y NUNCA se actualizan si luego el insumo se renombra o
+// se fusiona con otro (ver conteo.js#_openEditItem → merge_product), así
+// que un egreso viejo seguía mostrando el nombre de origen del merge en vez
+// del nombre unificado. products.name vía movement_items sí es un join en
+// vivo — la misma razón por la que Historial (registro.js) nunca tuvo este
+// problema. El "Destino" (comandas.notas, texto libre que reemplazó al
+// selector de Solicitante — ver egresorapido.js) se trae embebiendo
+// comandas bajo movements (comandas.movement_id → movements.id).
 
 import { auth } from '../auth.js';
 import { escHtml, catColor, catLabel } from '../helpers.js';
@@ -61,10 +64,11 @@ async function _fetchAll() {
   try {
     const all = [];
     let from = 0; const limit = 1000;
+    const notePattern = encodeURIComponent('*- Egreso');
     for (;;) {
-      const url = `${SUPABASE_URL}/rest/v1/comanda_items`
-        + `?select=id,cantidad,unidad,producto,producto_id,comandas!inner(id,created_at,notas,origen),products(category_id,client_id)`
-        + `&comandas.origen=eq.rapida`
+      const url = `${SUPABASE_URL}/rest/v1/movement_items`
+        + `?select=id,qnty,movements!inner(id,occurred_at,note,direction,comandas(notas)),products(name,category_id,client_id)`
+        + `&movements.direction=eq.out&movements.note=like.${notePattern}`
         + `&order=id.desc&limit=${limit}`;
       const res = await fetch(url, { headers: _headers({ Range: `${from}-${from + limit - 1}` }) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -75,18 +79,19 @@ async function _fetchAll() {
       from += limit;
     }
 
-    let logs = all.map(ci => {
-      const cm = ci.comandas || {};
-      const pr = ci.products || {};
+    let logs = all.map(m => {
+      const mv = m.movements || {};
+      const pr = m.products || {};
+      const cm = Array.isArray(mv.comandas) ? mv.comandas[0] : mv.comandas;
       return {
-        id: String(ci.id),
+        id: String(m.id),
         item_id: pr.client_id || '',
-        nombre: ci.producto || '(sin nombre)',
+        nombre: pr.name || '(sin nombre)',
         categoria: pr.category_id,
-        cantidad: Number(ci.cantidad) || 0,
-        ts: cm.created_at,
-        date: _localDate(cm.created_at),
-        destino: (cm.notas || '').trim(),
+        cantidad: m.qnty || 0,
+        ts: mv.occurred_at,
+        date: _localDate(mv.occurred_at),
+        destino: (cm?.notas || '').trim(),
       };
     });
 
@@ -194,9 +199,14 @@ function _render() {
         <div class="idc-dayname">${_fmtDateLong(d).dia}${badge}</div>
         <div class="idc-datenum">${_fmtDateShort(d)}</div>
       </div>
-      <div class="idc-total-block">
-        <div class="idc-total" style="color:var(--red)">-${total.toLocaleString('es-VE')}</div>
-        <div class="idc-total-lbl">unidades</div>
+      <div class="idc-top-right">
+        <button class="idc-hist-btn" data-nav="registro" data-tipo="Egreso" data-date="${d}" title="Ver en Historial" aria-label="Ver en Historial">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <div class="idc-total-block">
+          <div class="idc-total" style="color:var(--red)">-${total.toLocaleString('es-VE')}</div>
+          <div class="idc-total-lbl">unidades</div>
+        </div>
       </div>
     </div>
     <div class="idc-meta">${recs.length} registro${recs.length !== 1 ? 's' : ''}${timeStr ? ` · ${timeStr}` : ''}${destinoStr ? ` · ${escHtml(destinoStr)}` : ''}</div>
@@ -210,7 +220,10 @@ function _render() {
     </div>
     <div class="idc-foot">Ver detalle completo →</div>`;
 
-    card.addEventListener('click', () => _showDetail(d, recs, isToday, isYest));
+    card.addEventListener('click', e => {
+      if (e.target.closest('.idc-hist-btn')) return; // navega a Historial, no abre el detalle
+      _showDetail(d, recs, isToday, isYest);
+    });
     grid.appendChild(card);
   }
 }

@@ -728,6 +728,9 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .idc-dayname{font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t4);display:flex;align-items:center;gap:6px;margin-bottom:2px}
 .idc-datenum{font-family:'Space Grotesk',sans-serif;font-size:1.4rem;font-weight:800;color:var(--t1);line-height:1}
 .ing-diary-card-today .idc-datenum{color:var(--amber-d)}
+.idc-top-right{display:flex;align-items:center;gap:8px}
+.idc-hist-btn{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--t4);background:var(--s2);border:1px solid var(--bdr);transition:all .14s}
+.idc-hist-btn:hover{color:var(--t1);background:var(--bdr)}
 .idc-total-block{text-align:right}
 .idc-total{font-family:'Space Grotesk',sans-serif;font-size:1.6rem;font-weight:800;color:var(--green);line-height:1}
 .idc-total-lbl{font-size:10px;color:var(--t4);margin-top:2px;text-align:right}

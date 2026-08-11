@@ -1,4 +1,4 @@
-// ── Vista de Bitácora (log de movimientos) ────────────────
+// ── Vista de Historial (log de movimientos) ────────────────
 // Historial cronológico de cada movimiento (Recepción/Conteo/Egreso),
 // agrupado por día y filtrable por tipo. Permite borrar/corregir un
 // registro (revierte el delta sobre el insumo).
@@ -13,6 +13,18 @@ import { DB_SCHEMA } from '../env-config.js';
 let _root = null;
 let _allLogs = [];       // último set cargado/filtrado por área, sin filtrar por tipo
 let _filtroTipo = 'todos'; // 'todos' | 'Recepción' | 'Conteo' | 'Egreso'
+let _scrollToDay = null; // fecha 'YYYY-MM-DD' pendiente de enfocar (ver focusRegistro)
+
+// Llamado desde app.js tras nav('registro') cuando se llega acá con la
+// flecha "Ver en Historial" de una tarjeta de Ingresos/Egresos — preselecciona
+// el filtro de tipo y desplaza hasta el grupo del día correspondiente, para
+// poder ubicar y borrar/corregir el registro puntual sin tener que buscarlo
+// a mano entre todos los días.
+export function focusRegistro(tipo, date) {
+  if (tipo) _filtroTipo = tipo;
+  _scrollToDay = date || null;
+  _paint();
+}
 
 function _headers() { return auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }); }
 
@@ -150,7 +162,7 @@ function _paint() {
     const totalPos = recs.reduce((s, r) => s + Math.max(0, r.cantidad), 0);
     const badge = d === today ? '<span class="reg-day-badge">Hoy</span>' : '';
     html += `
-      <div class="reg-day">
+      <div class="reg-day" data-day="${d}">
         <div class="reg-day-head">
           <span class="reg-day-name">${_fmtDayLong(d)}${badge}</span>
           <span class="reg-day-sum">${recs.length} registro${recs.length!==1?'s':''} · +${totalPos.toLocaleString('es-VE')}</span>
@@ -163,6 +175,14 @@ function _paint() {
   html += '</div>';
   _root.innerHTML = html;
   _wireFilters();
+
+  if (_scrollToDay) {
+    const day = _scrollToDay;
+    _scrollToDay = null;
+    requestAnimationFrame(() => {
+      _root.querySelector(`.reg-day[data-day="${day}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 
   _root.querySelectorAll('.reg-del').forEach(btn => {
     btn.addEventListener('click', async () => {

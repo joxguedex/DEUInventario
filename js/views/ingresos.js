@@ -1,14 +1,14 @@
 // ── Vista de Ingresos — desglose diario de recepciones ────
 // Portado de UCVAcopio/js/views/ingresos.js, simplificado: sin mirror en
 // IndexedDB (esto es un reporte, no una herramienta offline-first como
-// Insumos/Bitácora) — se cachea en memoria por sesión y se refresca cada
+// Insumos/Historial) — se cachea en memoria por sesión y se refresca cada
 // vez que se abre la pestaña. Solo cuentan como "ingreso" acá los
 // movimientos direction=in cuyo `note` termine en " - Recepción" (Ingreso
 // Rápido) — los ajustes hechos con las herramientas de conteo de Insumos
 // quedan fuera a propósito (ver supabase/new-project-schema.sql#apply_count),
 // para no inflar este reporte con correcciones que no son donaciones reales.
-// La corrección/borrado de un registro puntual vive en Bitácora (ya
-// filtrable por "Recepción"), no acá.
+// La corrección/borrado de un registro puntual vive en Historial (flecha →
+// en la tarjeta del día, o filtro "Recepción" a mano), no acá.
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
@@ -191,9 +191,14 @@ function _render() {
         <div class="idc-dayname">${_fmtDateLong(d).dia}${badge}</div>
         <div class="idc-datenum">${_fmtDateShort(d)}</div>
       </div>
-      <div class="idc-total-block">
-        <div class="idc-total">${total.toLocaleString('es-VE')}</div>
-        <div class="idc-total-lbl">unidades</div>
+      <div class="idc-top-right">
+        <button class="idc-hist-btn" data-nav="registro" data-tipo="Recepción" data-date="${d}" title="Ver en Historial" aria-label="Ver en Historial">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <div class="idc-total-block">
+          <div class="idc-total">${total.toLocaleString('es-VE')}</div>
+          <div class="idc-total-lbl">unidades</div>
+        </div>
       </div>
     </div>
     <div class="idc-meta">${recs.length} registro${recs.length !== 1 ? 's' : ''}${timeStr ? ` · ${timeStr}` : ''}</div>
@@ -207,7 +212,10 @@ function _render() {
     </div>
     <div class="idc-foot">Ver detalle completo →</div>`;
 
-    card.addEventListener('click', () => _showDetail(d, recs, isToday, isYest));
+    card.addEventListener('click', e => {
+      if (e.target.closest('.idc-hist-btn')) return; // navega a Historial, no abre el detalle
+      _showDetail(d, recs, isToday, isYest);
+    });
     grid.appendChild(card);
   }
 }
@@ -302,7 +310,7 @@ function _showDetail(date, records, isToday, isYest) {
               <div class="idm-tl-qty">+${(r.cantidad || 0).toLocaleString('es-VE')}</div>
             </div>`).join('')}
         </div>
-        <div class="adm-note" style="margin-top:8px;">¿Un registro está mal? Corrígelo o bórralo desde Bitácora (filtro "Recepción").</div>
+        <div class="adm-note" style="margin-top:8px;">¿Un registro está mal? Corrígelo o bórralo desde Historial (flecha → en la tarjeta del día).</div>
       </div>` : ''}
     </div>
   </div>`;
