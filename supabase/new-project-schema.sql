@@ -579,10 +579,18 @@ begin
 end $$;
 
 -- 7.2 — cada producto nuevo arranca con su fila de inventory en 0.
+-- SECURITY DEFINER: products SÍ acepta INSERT/UPDATE directo del cliente
+-- (sync.js sube productos por REST sin pasar por una RPC), pero inventory
+-- NO tiene ninguna política que permita INSERT directo a nadie (§12 — todas
+-- sus escrituras van por RPCs SECURITY DEFINER). Sin este atributo, el
+-- INSERT de este trigger se evalúa con los permisos del usuario que creó el
+-- producto y la política de inventory lo rechaza con 403 (ver
+-- supabase/2026-08-10-fix-create-inventory-row-rls.sql).
 create or replace function public.create_inventory_row() returns trigger
-language plpgsql as $$
+language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.inventory (product_id) values (new.id);
+  insert into public.inventory (product_id) values (new.id)
+  on conflict (product_id) do nothing;
   return new;
 end;
 $$;

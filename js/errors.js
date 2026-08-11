@@ -23,9 +23,17 @@ export function explicarHTTP(status, cuerpo = '') {
              texto: `No se pudo hablar con el servidor. ${A_SALVO}`,
              grave: false };
   }
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return { titulo: 'Tu sesión venció',
              texto: `Cierra sesión y vuelve a entrar con tu correo. ${A_SALVO}`,
+             grave: true };
+  }
+  if (status === 403) {
+    // Distinto de 401: la sesión sigue siendo válida, es un permiso o una
+    // política de la base de datos rechazando la operación — cerrar sesión
+    // acá no arregla nada (ver js/sync.js, ya no dispara auth.signOut()).
+    return { titulo: 'Sin permiso para esta acción',
+             texto: `Tu cuenta no tiene permiso para hacer esto — no es un problema de tu sesión. ${A_SALVO} Avísale a un administrador.`,
              grave: true };
   }
   if (status === 404) {

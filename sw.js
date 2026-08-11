@@ -1,5 +1,5 @@
 // ── Service Worker · caché básico offline-first ───────────
-const CACHE = 'gbs-inventario-v0.03';
+const CACHE = 'gbs-inventario-v0.04';
 const ASSETS = [
   './',
   './index.html',

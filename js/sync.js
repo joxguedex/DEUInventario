@@ -211,7 +211,13 @@ export const sync = {
           const cuerpo = await res.text();
           console.warn(`Push de productos aplazado (${res.status}):`, cuerpo);
           this._fallo(res.status, cuerpo);
-          if (res.status === 401 || res.status === 403) this._authFailed = true;
+          // Solo 401 (token inválido/vencido) es de verdad "la sesión murió" —
+          // un 403 es un permiso/política RLS rechazando la operación con una
+          // sesión perfectamente válida (ver el bug de create_inventory_row en
+          // supabase/2026-08-10-fix-create-inventory-row-rls.sql: forzar el
+          // cierre de sesión ahí era un efecto colateral engañoso, nada tenía
+          // que ver con que la sesión hubiera vencido).
+          if (res.status === 401) this._authFailed = true;
         }
       } catch (err) {
         this._falloRed();
@@ -282,7 +288,7 @@ export const sync = {
         } else {
           console.warn(`${op.table} aplazado (${res.status})`);
           this._fallo(res.status, '');
-          if (res.status === 401 || res.status === 403) this._authFailed = true;
+          if (res.status === 401) this._authFailed = true; // 403 no es "sesión muerta", ver nota arriba
           // Se queda en la cola. Solo se frena lo que viene DESPUÉS para este
           // mismo insumo; el resto de los conteos sigue subiendo con normalidad.
           if (item) bloqueados.add(item);
