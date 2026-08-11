@@ -1,7 +1,7 @@
 /* ═══ GBSInventario · plantilla reutilizable ═══ */
 :root {
   /* ── MARCA — únicos dos valores a tocar para adaptar la paleta a otra
-     organización. Todo lo demás en este archivo usa --amber*/--sidebar*
+     organización.
      (derivadas acá abajo con color-mix, no hardcodeadas) — nunca hace
      falta perseguir un color por todo el CSS. El nombre del sistema y la
      descripción del "Centro Operativo" (Resumen) viven en js/branding.js,
