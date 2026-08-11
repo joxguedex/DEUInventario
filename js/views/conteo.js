@@ -6,12 +6,17 @@
 // cantidad puntual a puntual (herramientas de conteo convencionales,
 // quedan marcadas como "Conteo" en la Bitácora, ver store.js#registrar).
 //
-// A diferencia de UCVAcopio, cada tarjeta agrega "Renombrar" (con fusión de
-// duplicados, _openRename) y "Categoría" (admin-only, _openRecat) — ninguna
-// existe en UCVAcopio porque sus categorías son un enum fijo, mientras que
-// acá las crea el admin en vivo (store.categories).
-// "Eliminar" borra el insumo por completo del catálogo (soft delete,
-// store.deleteInsumo); solo pide confirmación, no contraseña.
+// El lápiz junto a −/+ abre "Editar insumo" (_openEditItem, portado de
+// UCVAcopio/js/views/inventory.js#openEditItem): nombre/categoría/cantidad/
+// umbral/eliminar en un solo modal. Único agregado sobre UCVAcopio: el
+// campo Nombre puede fusionar con un insumo ya existente si se elige uno de
+// los sugeridos (limpiar duplicados/typos sin perder el stock ya contado) —
+// UCVAcopio no lo necesita porque sus categorías son un enum fijo (acá el
+// admin las crea en vivo, store.categories) y no tiene ese flujo de fusión.
+// Reasignar la categoría sigue siendo exclusivo del admin (a diferencia de
+// nombre/cantidad/umbral/eliminar, que también puede un coordinador dentro
+// de su propia categoría) — el <select> se deshabilita para cualquier otro
+// rol (ver update_product_category en supabase/new-project-schema.sql §8b).
 // "+ categoría" (admin-only, al final de las pestañas) delega en
 // store.createCategory — sin categorías creadas no hay dónde clasificar un
 // insumo nuevo, así que Ingreso Rápido bloquea la creación hasta que exista
@@ -166,17 +171,17 @@ function cardHtml(it) {
         <button class="qty-btn" data-action="dec" data-id="${id}" tabindex="-1">−</button>
         <input type="number" class="qty-input" inputmode="numeric" min="0" value="${it.cantidad}" data-id="${id}">
         <button class="qty-btn" data-action="inc" data-id="${id}" tabindex="-1">+</button>
+        <button class="qty-btn" data-action="edit" data-id="${id}" title="Editar" aria-label="Editar insumo">${_editIco()}</button>
       </div>
       <div class="ic-quickadd">
         <input type="number" class="ic-qadd-inp" inputmode="numeric" min="1" placeholder="Cantidad recibida…" data-qadd-id="${id}">
         <button class="ic-qadd-btn" data-action="add" data-id="${id}">+ Sumar</button>
-      </div>
-      <div class="ic-actions">
-        <button class="cnt-row-rename" data-action="rename" data-id="${id}">Renombrar</button>
-        ${auth.isAdmin() ? `<button class="cnt-row-recat" data-action="recat" data-id="${id}">Categoría</button>` : ''}
-        <button class="cnt-row-delete" data-action="delete" data-id="${id}">Eliminar</button>
       </div>` : ''}
     </div>`;
+}
+
+function _editIco() {
+  return `<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
 }
 
 // Reemplaza una tarjeta ya pintada por su versión actualizada (sin
@@ -248,18 +253,7 @@ function _onGridClick(e) {
     return;
   }
 
-  if (action === 'rename') { _openRename(id); return; }
-  if (action === 'recat')  { _openRecat(id); return; }
-
-  if (action === 'delete') {
-    const it = store.find(id);
-    if (!confirm(`¿Seguro que deseas eliminar "${it?.nombre || ''}" del catálogo por completo? No se puede deshacer.`)) return;
-    (async () => {
-      await store.deleteInsumo(id);
-      card.remove();
-      toast.ok('Insumo eliminado.');
-    })();
-  }
+  if (action === 'edit') { _openEditItem(id); }
 }
 
 function _onGridInput(e) {
@@ -283,12 +277,6 @@ function _onGridKeydown(e) {
   _saveQty(card, id, inp.value === '' ? 0 : parseInt(inp.value, 10) || 0);
 }
 
-// ── Modal "Renombrar" ────────────────────────────────────
-// Un mismo insumo suele terminar duplicado en el catálogo con nombres
-// ligeramente distintos (typos, mayúsculas, singular/plural). Este modal
-// resuelve ambos casos con un solo buscador: si el usuario elige uno de los
-// insumos sugeridos, el actual se fusiona en ese (suma de stock + borrado del
-// actual); si no elige ninguno, el texto escrito se usa como nuevo nombre.
 function _renModal(html) {
   let ov = document.getElementById('cnt-ren-modal');
   if (!ov) {
@@ -305,37 +293,65 @@ function _renModal(html) {
 }
 function _closeRen() { document.getElementById('cnt-ren-modal')?.classList.remove('open'); }
 
-function _openRename(id) {
+// ── Modal "Editar insumo" ────────────────────────────────
+// Nombre (con fusión de duplicados) + categoría (admin-only) + cantidad +
+// umbral + eliminar, en un solo modal — ver comentario de cabecera.
+function _openEditItem(id) {
   const it = store.find(id);
   if (!it) return;
-  let target = null; // insumo elegido del buscador para fusionar (null = solo renombrar)
+  let target = null; // insumo elegido del buscador de nombre para fusionar
+
+  const isAdmin = auth.isAdmin();
+  const catOptions = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    .map(c => `<option value="${c.id}" ${String(c.id) === String(it.categoria) ? 'selected' : ''}>${escHtml(c.nombre)}</option>`).join('');
 
   const ov = _renModal(`
     <div class="adm-box adm-box-lg">
       <div class="adm-head">
         <div>
-          <div class="adm-title">Renombrar insumo</div>
+          <div class="adm-title">Editar insumo</div>
           <div class="adm-sub">${escHtml(it.nombre)}</div>
         </div>
         <button class="adm-x" data-close>&times;</button>
       </div>
       <div class="adm-field">
-        <label>Nombre correcto o nuevo</label>
-        <input id="ren-input" type="text" autocomplete="off" value="${escHtml(it.nombre)}">
+        <label>Nombre</label>
+        <input id="ei-nombre" type="text" autocomplete="off" value="${escHtml(it.nombre)}">
       </div>
-      <div class="adm-note">Si eliges una de las opciones de la lista, su stock se sumará al de ese insumo y "${escHtml(it.nombre)}" se eliminará del catálogo. Si no eliges ninguna, solo se le cambiará el nombre por el que escribiste.</div>
-      <div class="ren-sugg" id="ren-sugg"></div>
-      <div class="adm-err" id="ren-err"></div>
-      <button class="adm-btn adm-btn-primary" id="ren-save">Renombrar</button>
+      <div class="adm-note">Si eliges una de las opciones de la lista, su stock se sumará al de ese insumo y "${escHtml(it.nombre)}" se eliminará del catálogo. Si no eliges ninguna, se guarda el nombre que escribiste.</div>
+      <div class="ren-sugg" id="ei-sugg"></div>
+      <div class="adm-field">
+        <label>Categoría</label>
+        <select id="ei-cat" ${isAdmin ? '' : 'disabled title="Solo un administrador puede reasignar la categoría"'}>${catOptions}</select>
+      </div>
+      <div class="adm-field-row">
+        <div class="adm-field">
+          <label>Cantidad</label>
+          <input id="ei-qty" type="number" min="0" value="${it.cantidad}">
+        </div>
+        <div class="adm-field">
+          <label>Umbral de alerta</label>
+          <input id="ei-thr" type="number" min="0" value="${it.umbral}">
+        </div>
+      </div>
+      <div class="adm-err" id="ei-err"></div>
+      <div class="adm-actions-row">
+        <button class="adm-btn adm-btn-danger" id="ei-delete">Eliminar</button>
+        <button class="adm-btn adm-btn-primary" id="ei-save">Guardar</button>
+      </div>
     </div>`);
 
-  const inp     = ov.querySelector('#ren-input');
-  const sugg    = ov.querySelector('#ren-sugg');
-  const err     = ov.querySelector('#ren-err');
-  const saveBtn = ov.querySelector('#ren-save');
+  const nombreInp = ov.querySelector('#ei-nombre');
+  const sugg      = ov.querySelector('#ei-sugg');
+  const catSel    = ov.querySelector('#ei-cat');
+  const qtyInp    = ov.querySelector('#ei-qty');
+  const thrInp    = ov.querySelector('#ei-thr');
+  const err       = ov.querySelector('#ei-err');
+  const saveBtn   = ov.querySelector('#ei-save');
+  const delBtn    = ov.querySelector('#ei-delete');
 
   function _paintSave() {
-    saveBtn.textContent = target ? `Fusionar con "${target.nombre}" y eliminar` : 'Renombrar';
+    saveBtn.textContent = target ? `Fusionar con "${target.nombre}"` : 'Guardar';
   }
 
   function _search(q) {
@@ -358,7 +374,7 @@ function _openRename(id) {
     sugg.querySelectorAll('.ren-sugg-item').forEach(b => {
       b.onclick = () => {
         target = store.find(b.dataset.id);
-        inp.value = target.nombre;
+        nombreInp.value = target.nombre;
         sugg.innerHTML = '';
         _paintSave();
       };
@@ -366,19 +382,28 @@ function _openRename(id) {
   }
 
   let t;
-  inp.addEventListener('input', () => {
+  nombreInp.addEventListener('input', () => {
     target = null; // volver a escribir invalida cualquier selección previa
     err.textContent = '';
     _paintSave();
     clearTimeout(t);
-    t = setTimeout(() => _search(inp.value.trim()), 110);
+    t = setTimeout(() => _search(nombreInp.value.trim()), 110);
+  });
+
+  delBtn.addEventListener('click', async () => {
+    if (!confirm(`¿Seguro que deseas eliminar "${it.nombre}" del catálogo por completo? No se puede deshacer.`)) return;
+    await store.deleteInsumo(it.id);
+    _closeRen();
+    renderList();
+    toast.ok('Insumo eliminado.');
   });
 
   saveBtn.addEventListener('click', async () => {
     err.textContent = '';
-    const val = inp.value.trim();
+    const val = nombreInp.value.trim();
     if (!val) { err.textContent = 'Escribe un nombre.'; return; }
 
+    // Fusión: reemplaza todo lo demás (el insumo actual desaparece del catálogo).
     if (target) {
       if (!confirm(`¿Fusionar "${it.nombre}" con "${target.nombre}"? Se sumará el stock de "${it.nombre}" (${it.cantidad}) a "${target.nombre}" y "${it.nombre}" se eliminará del catálogo. No se puede deshacer.`)) return;
       await store.fusionarInsumo(it.id, target.id);
@@ -388,63 +413,31 @@ function _openRename(id) {
       return;
     }
 
-    if (normSearch(val) === normSearch(it.nombre)) { _closeRen(); return; }
-    await store.renombrarInsumo(it.id, val);
+    if (isAdmin && String(catSel.value) !== String(it.categoria)) {
+      try {
+        await store.setProductCategory(it.id, catSel.value);
+      } catch (ex) {
+        err.textContent = ex.message || 'No se pudo cambiar la categoría.';
+        return;
+      }
+    }
+
+    if (normSearch(val) !== normSearch(it.nombre)) {
+      await store.renombrarInsumo(it.id, val);
+    }
+
+    const qty = qtyInp.value === '' ? it.cantidad : parseInt(qtyInp.value, 10) || 0;
+    const thr = thrInp.value === '' ? it.umbral : parseInt(thrInp.value, 10) || 0;
+    if (thr !== it.umbral) await store.setUmbral(it.id, thr);
+    if (qty !== it.cantidad) await store.setTotal(it.id, qty);
+
     _closeRen();
     renderList();
-    toast.ok('Insumo renombrado.');
+    toast.ok('Insumo actualizado.');
   });
 
   _paintSave();
-  setTimeout(() => { inp.focus(); inp.select(); }, 50);
-}
-
-// ── Modal "Cambiar categoría" (admin-only) ──────────────────────────────
-// Reasignar la categoría de un producto es exclusivo del admin (a
-// diferencia de crear/editar/eliminar insumos, que también puede un
-// coordinador dentro de su propia categoría) — ver update_product_category
-// en supabase/new-project-schema.sql §8b. El botón que abre esto ya está
-// oculto para no-admin (cardHtml), esto es respaldo defensivo: la RPC en
-// sí también rechaza a cualquiera que no sea admin.
-function _openRecat(id) {
-  const it = store.find(id);
-  if (!it || !auth.isAdmin()) return;
-
-  const ov = _renModal(`
-    <div class="adm-box">
-      <div class="adm-head">
-        <div>
-          <div class="adm-title">Cambiar categoría</div>
-          <div class="adm-sub">${escHtml(it.nombre)}</div>
-        </div>
-        <button class="adm-x" data-close>&times;</button>
-      </div>
-      <div class="adm-field">
-        <label>Categoría nueva</label>
-        <select id="recat-sel" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
-          ${[...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
-            .map(c => `<option value="${c.id}" ${String(c.id) === String(it.categoria) ? 'selected' : ''}>${escHtml(c.nombre)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="adm-err" id="recat-err"></div>
-      <button class="adm-btn adm-btn-primary" id="recat-save">Guardar</button>
-    </div>`);
-
-  const sel = ov.querySelector('#recat-sel');
-  const err = ov.querySelector('#recat-err');
-  ov.querySelector('#recat-save').addEventListener('click', async () => {
-    err.textContent = '';
-    const nuevaCat = sel.value;
-    if (String(nuevaCat) === String(it.categoria)) { _closeRen(); return; }
-    try {
-      await store.setProductCategory(it.id, nuevaCat);
-      _closeRen();
-      renderList();
-      toast.ok('Categoría actualizada.');
-    } catch (ex) {
-      err.textContent = ex.message || 'No se pudo cambiar la categoría.';
-    }
-  });
+  setTimeout(() => { nombreInp.focus(); nombreInp.select(); }, 50);
 }
 
 // ── "+ categoría" (admin-only) — atajo rápido sin salir de Insumos.

@@ -42,7 +42,6 @@ let _addingPersona = false;           // toggle del mini-form "+ Nueva persona"
 // voluntario automático (_grant_vol_access) — acá el pedido es explícitamente
 // "sin ingreso, solo registrado en persons, sin área", así que se omite entero.
 const PHONE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
-const CATEGORIAS = ['Externo', 'Voluntario', 'Medico', 'Rescatista', 'Conductor'];
 
 function _headers(extra = {}) {
   return auth.authHeaders({
@@ -187,9 +186,6 @@ function _personaFormHtml() {
         </select>
         <input class="eg-input" id="eg-pqa-numero" inputmode="numeric" maxlength="7" placeholder="1234567">
       </div>
-      <select class="qa-new-sel" id="eg-pqa-categoria">
-        ${CATEGORIAS.map(c => `<option value="${c}">${c}</option>`).join('')}
-      </select>
       <div class="eg-persona-actions">
         <button class="eg-persona-save" id="eg-pqa-save" type="button">Guardar persona</button>
         <button class="qa-link" id="eg-pqa-cancel" type="button">Cancelar</button>
@@ -368,7 +364,9 @@ async function _crearPersonaRapida() {
   const apellido = _host.querySelector('#eg-pqa-apellido')?.value.trim();
   const prefijo = _host.querySelector('#eg-pqa-prefijo')?.value;
   const numero = _host.querySelector('#eg-pqa-numero')?.value.trim();
-  const categoria = _host.querySelector('#eg-pqa-categoria')?.value;
+  // Sin selector: toda persona creada acá queda como 'Externo' por ahora
+  // (pendiente decidir si este campo persiste o se descarta del todo).
+  const categoria = 'Externo';
 
   if (!ci || ci <= 0) { toast.err('Cédula inválida.'); return; }
   if (!nombre || !apellido) { toast.err('Nombre y apellido son obligatorios.'); return; }

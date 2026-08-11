@@ -79,9 +79,11 @@ input[type=number]{-moz-appearance:textfield}
 .adm-warn{font-size:12.5px;line-height:1.5;color:var(--amber-d);background:var(--amber-bg);border:1px solid #FDE68A;border-radius:var(--r-sm);padding:10px 12px;margin-bottom:14px}
 .adm-field{margin-bottom:12px}
 .adm-field label{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--t4);margin-bottom:5px}
-.adm-field input{width:100%;padding:12px 14px;border:1.5px solid var(--bdr);border-radius:var(--r-sm);font-size:15px;background:var(--s2)}
-.adm-field input:focus{outline:none;border-color:var(--amber);background:#fff;box-shadow:0 0 0 3px rgba(245,158,11,.12)}
-.adm-field input:disabled{opacity:.5}
+.adm-field input,.adm-field select{width:100%;padding:12px 14px;border:1.5px solid var(--bdr);border-radius:var(--r-sm);font-size:15px;background:var(--s2);color:var(--t1)}
+.adm-field input:focus,.adm-field select:focus{outline:none;border-color:var(--amber);background:#fff;box-shadow:0 0 0 3px rgba(245,158,11,.12)}
+.adm-field input:disabled,.adm-field select:disabled{opacity:.5}
+.adm-field-row{display:flex;gap:10px}
+.adm-field-row .adm-field{flex:1;min-width:0}
 .adm-err{font-size:12.5px;color:var(--red);min-height:16px;margin-bottom:8px}
 .adm-btn{width:100%;padding:12px;border-radius:var(--r-sm);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;background:var(--s2);border:1px solid var(--bdr);color:var(--t2)}
 .adm-btn:hover{border-color:var(--t4);color:var(--t1)}
@@ -90,6 +92,8 @@ input[type=number]{-moz-appearance:textfield}
 .adm-btn-primary:hover{background:#000;color:#fff}
 .adm-btn-danger{background:var(--red-bg);border-color:#FCA5A5;color:var(--red)}
 .adm-btn-danger:hover{background:var(--red);color:#fff;border-color:var(--red)}
+.adm-actions-row{display:flex;gap:10px;margin-top:4px}
+.adm-actions-row .adm-btn{width:auto;flex:1}
 .adm-note{font-size:11.5px;line-height:1.5;color:var(--t4);margin-top:8px}
 .adm-sec{padding:14px 0;border-top:1px solid var(--bdr);margin-top:4px}
 .adm-sec-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -217,24 +221,13 @@ input[type=number]{-moz-appearance:textfield}
 .ctc-progress-sub{margin-top:9px;font-size:12.5px;color:var(--t3)}
 .ctc-progress-sub strong{color:var(--t1);font-weight:600}
 
-.cnt-filters{display:flex;gap:4px;background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r-sm);padding:3px;box-shadow:var(--sh)}
+.cnt-filters{display:flex;gap:4px;background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r-sm);padding:3px;box-shadow:var(--sh);margin-bottom:14px}
 .cnt-fbtn{padding:8px 14px;border-radius:var(--r-xs);font-size:13px;font-weight:600;color:var(--t3);transition:all .13s}
 .cnt-fbtn:hover{color:var(--t1)}
 .cnt-fbtn.active{background:var(--sidebar);color:#fff}
 
 .cnt-hint{font-size:12.5px;color:var(--t3);margin:-2px 0 12px;padding:9px 13px;background:var(--amber-bg);border:1px solid #FDE68A;border-radius:var(--r-sm);line-height:1.4}
 .cnt-hint strong{color:var(--amber-d);font-weight:600}
-
-/* ── Botones de acción de tarjeta (Renombrar/Categoría/Eliminar) —
-   reusados dentro de .ic-actions, ver INVENTORY GRID abajo. Ninguno existe
-   en UCVAcopio (sus categorías son un enum fijo); acá sí, porque las crea
-   el admin en vivo. */
-.cnt-row-rename,.cnt-row-recat{flex-shrink:0;padding:9px 14px;border-radius:var(--r-xs);font-size:12.5px;font-weight:600;color:var(--t2);background:#fff;border:1px solid var(--bdr)}
-.cnt-row-rename:hover:not(:disabled),.cnt-row-recat:hover:not(:disabled){border-color:var(--t4);color:var(--t1)}
-.cnt-row-rename:disabled,.cnt-row-recat:disabled{opacity:.4}
-.cnt-row-delete{flex-shrink:0;padding:9px 14px;border-radius:var(--r-xs);font-size:12.5px;font-weight:600;color:var(--red);background:var(--red-bg);border:1px solid #FCA5A5}
-.cnt-row-delete:hover:not(:disabled){background:var(--red);color:#fff;border-color:var(--red)}
-.cnt-row-delete:disabled{opacity:.4}
 
 /* ── BÚSQUEDA + PESTAÑAS DE CATEGORÍA — Insumos ─────────────────────────
    Portado de UCVAcopio/css/styles.css (.inv-search-row/.tabs/.tab). */
@@ -286,9 +279,8 @@ input[type=number]{-moz-appearance:textfield}
 .ic-qadd-btn{flex-shrink:0;padding:7px 12px;border-radius:var(--r-sm);border:none;background:var(--green);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;transition:opacity .15s;white-space:nowrap}
 .ic-qadd-btn:hover{opacity:.85}
 .ic-qadd-btn:active{opacity:.7}
-.ic-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 
-/* Buscador del modal "Renombrar" (ver conteo.js#_openRename) */
+/* Buscador de fusión dentro del modal "Editar insumo" (ver conteo.js#_openEditItem) */
 .ren-sugg{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;margin-bottom:10px}
 .ren-sugg-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:10px 12px;background:var(--s2);border:1px solid var(--bdr);border-radius:var(--r-sm);font-size:13.5px;color:var(--t2);text-align:left}
 .ren-sugg-item:hover{border-color:var(--amber);color:var(--t1)}
@@ -532,10 +524,6 @@ input[type=number]{-moz-appearance:textfield}
   body.qa-lock{overflow:hidden}
   .qa-sugg{max-height:38vh}
 
-  /* Insumos: botones de acción a lo ancho, más fáciles de tocar */
-  .ic-actions .cnt-row-rename{flex:1 1 auto;text-align:center}
-  .ic-actions .cnt-row-recat{flex:1 1 auto;text-align:center}
-  .ic-actions .cnt-row-delete{flex:1 1 auto;text-align:center}
   .reg-row{padding:13px 14px}
   .rsm-hero{gap:20px;padding:20px}
   .rsm-hero-stats{gap:18px}

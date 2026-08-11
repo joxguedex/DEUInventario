@@ -266,6 +266,22 @@ export const store = {
     return it;
   },
 
+  // ── Cambiar el umbral de alerta de un insumo ya existente ──
+  // Distinto de crear (addNuevo, donde el umbral se define de una vez):
+  // esto ajusta el umbral de un insumo que ya está en el catálogo, desde el
+  // modal "Editar insumo" de views/conteo.js.
+  async setUmbral(id, umbral) {
+    const it = this.find(id);
+    if (!it) return null;
+    umbral = Math.max(0, Math.round(Number(umbral) || 0));
+    it.umbral = umbral;
+    it.updated_at = nowISO();
+    it.dirty = true;
+    await db.put(it);
+    await sync.enqueue('products', it);
+    return it;
+  },
+
   // ── Fusionar un insumo duplicado en otro ya existente ───
   // Usado por "Renombrar" cuando, en vez de escribir un nombre nuevo, el
   // usuario elige un insumo que ya está en el catálogo: el stock de `sourceId`
