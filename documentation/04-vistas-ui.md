@@ -1,295 +1,266 @@
-# 4. Vistas / UI (`js/views/*.js`, `js/components/toast.js`)
+# 4. Vistas / UI (`js/views/*.js`, `js/components/*.js`)
 
 Cada vista es un módulo con una función `render*(rootEl)` que reemplaza el
-`innerHTML` del contenedor y conecta sus propios listeners (no hay un
-framework de componentes ni virtual DOM — todo es DOM imperativo con
-template strings).
+`innerHTML` del contenedor y conecta sus propios listeners — no hay
+framework de componentes ni virtual DOM, todo es DOM imperativo con
+template strings.
 
-## `views/conteo.js` — Conteo físico (vista principal)
+## `views/conteo.js` — Insumos
 
-Lista completa del catálogo, agrupada por categoría, con filtros y
-actualización incremental para no perder el scroll al sincronizar.
+Catálogo completo, filtrable por búsqueda y por categoría.
 
-- **Tarjeta de progreso** (`renderTop`): porcentaje de insumos contados +
-  unidades totales, recalculada desde `store.stats()`.
-- **Controles**: buscador con debounce de 150ms (`normSearch`), y 3 filtros
-  (`todos` / `pendientes` / `contados`).
-- **Lista agrupada por categoría** (`renderList`), orden fijo definido en
-  `CAT_ORDER`. Cada categoría es una sección colapsable; se abre la primera
-  automáticamente en el primer render. Si hay búsqueda o filtro activo,
-  todas las secciones se fuerzan abiertas (`forceOpen`).
-- **Fila de insumo** (`_rowHTML`): checkbox visual de "contado", nombre +
-  unidad, input numérico con botones `−`/`+`, botón `×` para desmarcar
-  (`store.resetItem`). El guardado del input tiene debounce de 550ms
-  (`_onInput`) y también se dispara con Enter (que además mueve el foco al
-  siguiente input, permitiendo contar en cadena sin usar el mouse) o al usar
-  los botones de paso.
-- **`syncView()`** — se llama cuando `sync.js` termina un ciclo de pull. En
-  vez de re-renderizar toda la lista (lo que perdería el scroll y las
-  categorías abiertas), repinta en sitio los datos de las filas ya visibles
-  — salvo la fila que el usuario esté editando en ese momento
-  (`document.activeElement`). Solo dispara un `renderList()` completo si
-  cambió la cantidad total de ítems (alta remota de un insumo nuevo).
-- **`refreshItem(id)`** — refresco puntual de una fila concreta, usado por
-  `app.js` cuando el panel de agregado rápido (`quickadd.js`) modifica un
-  ítem mientras la vista de conteo está activa.
+- **Buscador** (`#cnt-q`, debounce 150ms, `normSearch`).
+- **Selector de categorías** (`.tabs`/`.tab`, `_paintTabs()`): "Todos" + una
+  pestaña por categoría (`store.categories`), más "+ categoría" al final
+  (solo admin, delega en `store.createCategory`). **Se oculta entero para
+  un coordinador de área específica** — `store.visibleItems()` ya lo limita
+  a su propia categoría del lado del cliente, así que el selector no
+  filtraría nada real; admin y el coordinador de "general" sí lo ven.
+- **Grilla de tarjetas** (`.inv-grid`/`.inv-card`): nombre, categoría,
+  cantidad, barra de progreso coloreada por estado (`iStatus`/`iPct`),
+  controles `−`/input/`+` (con debounce), y un ícono de lápiz junto a los
+  controles que abre **"Editar insumo"** (`_openEditItem`) — modal único
+  con nombre (+ búsqueda de fusión con un insumo ya existente, si el nombre
+  coincide con otro), categoría (admin-only), cantidad, umbral y eliminar.
+  Sin `auth.canEditInventory()`, la tarjeta es de solo lectura (sin
+  controles ni lápiz).
 
-## `views/quickadd.js` — Agregado rápido
+## `views/ingresorapido.js` — Ingreso Rápido
 
-Panel persistente e independiente de la vista activa (vive en
-`<aside id="quickadd">`, montado una sola vez desde `app.js`). En desktop es
-una barra lateral fija; en móvil se convierte en una hoja inferior
-(`openSheet`/`closeSheet`, clase `.open` + backdrop).
+Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
+"Agregado Rápido": ya no permite restar (para eso está Egreso Rápido).
 
-Tres estados internos (variables de módulo `_sel`, `_new`):
+- Buscador (debounce 110ms) → sugerencias (top 8, coincidencia de prefijo
+  primero) con un botón "Crear '<texto>'" al final.
+- **Insumo existente**: total actual + input de cantidad + "Sumar" →
+  `store.registrar(id, n, {origen:'ingreso'})`.
+- **Insumo nuevo**: nombre, categoría (`<select>` filtrado a la propia área
+  para un coordinador), unidad, umbral (default 10), cantidad inicial →
+  `store.addNuevo(...)`. Si no hay categorías creadas todavía, bloquea la
+  creación con un aviso en vez de mostrar un `<select>` vacío.
+- **`openSheet()`/`closeSheet()`** — hoja inferior en móvil (clase `.open`
+  + backdrop + `body.qa-lock`).
+- **Herramientas admin** (`.qa-admin-tools`, solo `auth.isAdmin()`, en el
+  pie compartido del panel):
+  - **Exportar JSON** — dump completo de IndexedDB.
+  - **Refrescar local** — `sync.pullAll()` (re-pull completo).
+  - **Exportar Excel** — `store.visibleItems()` no eliminados a `.xlsx`.
+  - **Importar Excel** — lee un `.xlsx`/`.xls`/`.csv` (columnas
+    Nombre+Cantidad requeridas), matchea categoría por nombre, confirma, y
+    llama `store.addNuevo(...)` por fila.
+  - **Máquina del tiempo** — atajo directo al panel de respaldos de
+    `admin.js`.
 
-1. **Buscador** (estado por defecto): input con sugerencias en vivo
-   (debounce 110ms), scored por si el texto normalizado empieza con la
-   query o solo la contiene, top 8 resultados. Última opción de la lista
-   siempre es "Crear `<query>`".
-2. **Insumo seleccionado** (`_sel`): tarjeta con el total actual, input de
-   cantidad, y botones **Sumar**/**Restar** (Enter = sumar, Shift+Enter =
-   restar). Cada operación llama a `store.registrar(id, ±n)`, muestra un
-   toast con el resultado, y refresca el total en pantalla sin cerrar el
-   panel (para poder sumar varias veces seguidas).
-3. **Crear insumo nuevo** (`_new`): nombre + categoría + unidad + cantidad
-   inicial → `store.addNuevo(...)`.
+## `views/egresorapido.js` — Egreso Rápido
 
-El pie del panel muestra el nombre del "contador" activo — si el usuario no
-lo fijó manualmente (`store.setContador`), se deriva del nombre de la cuenta
-con sesión (`auth.name()` — **actualizado 2026-07-19**, antes
-`auth.email().split('@')[0]`; ya no hay email, el login es por CI, ver
-`05-autenticacion.md`), con una etiqueta visual "cuenta" para distinguir el
-origen.
+Online-only: genera una comanda real (`create_comanda_rapida`), no un
+ajuste de conteo. Bypasa la cola de sync por completo — el descuento de
+stock ocurre en el servidor (trigger sobre `movement_items`), y como la RPC
+no pasa por `sync.enqueue`, el módulo aplica un parche local manual sobre
+`store.items` tras confirmar (para que la tarjeta en Insumos refleje el
+nuevo stock sin esperar al próximo pull incremental).
 
-Tras cualquier acción, se invoca el callback `onAdded(id, isNew)` (pasado
-desde `app.js`), que decide si repintar la lista completa (alta nueva) o
-solo la fila afectada, y cierra la hoja en móvil para volver a ver la lista.
+- **Carrito** (`_rows`): búsqueda de producto por fila (excluye ítems sin
+  `db_id`, es decir, no sincronizados todavía), cantidad por fila con aviso
+  si excede el stock disponible.
+- **Destino** (`#eg-destino`) — campo de texto libre, obligatorio para
+  poder enviar. Reemplaza a un selector de Solicitante que existió antes:
+  no había forma de ver/editar las personas creadas desde ese flujo, así
+  que se sacó por completo. El texto viaja como `p_note` → se guarda en
+  `comandas.notas` del lado del servidor.
+- **Envío** (`_submit`): `p_solicitante_ci: null` siempre (columna
+  conservada en el esquema pero sin uso desde el cliente), `p_items`,
+  `p_client_op_id` (uid estable entre reintentos, para idempotencia), y
+  `p_note` = destino. Requiere `sync.online` — sin conexión, el botón queda
+  deshabilitado con un aviso.
+- El estado online/offline se vigila con `sync.onChange`, pero **nunca**
+  dispara un repintado completo (`_paint()`) — solo actualiza el aviso y el
+  estado del botón — para no perder lo que el usuario tenga a medio
+  escribir (destino, buscador, cantidad de una fila) en cada ciclo de sync
+  de fondo (cada 30s).
 
-## `views/registro.js` — Bitácora
+## `views/registro.js` — Historial
 
-Vista accesible a quien tenga acceso completo a la plataforma
-(`auth.hasFullAccess()` — admin o coordinador con área fuera de
-recepción/sala situacional, ver `05-autenticacion.md`; un `voluntario` nunca
-llega a loguear en esta app en absoluto). **Actualizado 2026-07-19**: ya no
-depende de "sesión activa" para decidir la fuente de datos — sin JWT, la
-anon key alcanza para leer la bitácora igual que para contar; antes de este
-cambio la condición era `if (SUPABASE_URL && auth.token())`, ahora es solo
-`if (SUPABASE_URL)`.
+Nombre de pestaña "Historial" (el módulo/CSS internos siguen usando
+`registro`/`reg-*` — solo cambió el texto visible). Bitácora cronológica de
+cada movimiento (Recepción/Conteo/Egreso), agrupada por día y filtrable por
+tipo.
 
-Muestra el historial de conteos agrupado por día. **Trae el historial
-completo directamente desde Supabase** (`GET /rest/v1/movement_items` con
-`select` anidado a `movements` y `products`, `limit=500`, orden descendente
-por `id`, header `Accept-Profile: new_schema_archive`), reconstruyendo cada
-fila a partir de `movement.direction` (`in`/`out`) para inferir el signo
-del delta. Si esa llamada falla o no hay red, usa `store.activeLogs()`
-(datos locales).
+- Trae el historial completo directo desde Supabase
+  (`GET rest/v1/movement_items` con `select` anidado a `movements` y
+  `products`, `limit=500`, orden descendente por `id`), reconstruyendo el
+  signo del delta desde `movements.direction`. Si falla o no hay red, cae a
+  `store.activeLogs()` local.
+- Un coordinador de área específica solo ve movimientos de su propia
+  categoría (filtro por `categoria === auth.area()`); admin y el
+  coordinador de "general" ven todo.
+- Cada fila (`_rowHTML`): hora, punto de color por categoría, nombre + tag
+  de tipo, quién, delta con signo, y un botón de borrar/corregir
+  (`.reg-del`, solo con `auth.canEditInventory()`) que llama a
+  `store.deleteLog(id, fallback)`.
+- **`focusRegistro(tipo, date)`** (exportada) — preselecciona el filtro de
+  tipo y hace scroll (`data-day` en cada grupo) hasta el día indicado.
+  Llamada por `app.js` cuando se navega acá desde la flecha "Ver en
+  Historial" de una tarjeta de Ingresos/Egresos.
 
-- Agrupación por día vía `localDate()`, con badge "Hoy" en el día actual y
-  suma de unidades positivas por día en el encabezado.
-- Cada fila (`_rowHTML`) muestra hora, punto de color por categoría, nombre,
-  quién contó, delta (con signo), y un botón de borrar/corregir que llama a
-  `store.deleteLog(id, fallback)` — el `fallback` reconstruye los datos
-  mínimos del log a partir de los `data-*` del botón, por si el registro no
-  existe en `store.logs` local (por ejemplo, si vino de la consulta directa
-  a la nube y no del store local).
+## `views/ingresos.js` — Reporte de recepciones
 
-## `views/resumen.js` — Progreso + exportación
+Solo lectura, sin mirror en IndexedDB (se cachea en memoria por sesión y se
+refresca al abrir la pestaña o tras un ciclo de sync). Cuentan como
+"ingreso" los movimientos `direction=in` cuyo `note` termina en
+`" - Recepción"` — los ajustes hechos desde Insumos quedan fuera a
+propósito, para no inflar el reporte con correcciones que no son
+recepciones reales.
 
-- **Hero**: anillo SVG de progreso (`stroke-dasharray` calculado a partir
-  del porcentaje) + contadores de contados/pendientes/unidades.
-- **Acciones**:
-  - *Exportar a Excel* / *Solo pendientes* (`_export`): usa la librería
-    global `XLSX` (cargada por CDN en `index.html`) para generar un `.xlsx`
-    con columnas `ID, Insumo, Categoría, Unidad, Cantidad, Contado, Contado
-    por`, ordenado por categoría (según `CAT_ORDER`) y luego alfabéticamente.
-    Nombre de archivo con fecha ISO (`inventario-real-[pendientes-]YYYY-MM-DD.xlsx`).
-  - *Subir todo a la nube* (solo visible si `sync.enabled`): acción sensible
-    protegida por `requireCoord()` (ver
-    [05-autenticacion.md](./05-autenticacion.md)); llama a
-    `sync.pushAll(store.items)`, que encola cada ítem como upsert de
-    `products`.
-- **Desglose por categoría**: barra de progreso individual por categoría
-  usando `store.statsByCat()`.
+- **Estadísticas generales**: unidades recibidas, registros, insumos
+  distintos, promedio diario.
+- **Tarjeta por día** (`.ing-diary-card`): top-3 insumos del día, con una
+  **flecha "Ver en Historial"** (`.idc-hist-btn`, esquina superior derecha,
+  `data-nav="registro" data-tipo="Recepción" data-date="<día>"`) que salta
+  directo a Historial con ese filtro/día ya aplicados — para poder
+  ubicar y corregir/borrar un registro puntual sin buscarlo a mano. Un
+  click en el resto de la tarjeta abre el **modal de detalle** del día
+  (barras "lo más recibido" + línea de tiempo + exportar a Excel).
 
-## `views/voluntarios.js` — Hub de gestión de usuarios
+## `views/egresos.js` — Reporte de entregas
 
-> **Reescrito por completo el 2026-07-19** (02-inventario.md §3, carpeta
-> hermana a los 3 repos) — el modelo viejo (Supabase Auth con email
-> sintético `${ci}@ucv.ve`, columnas `status`/`turno`/`departamento` sobre
-> `persons` que probablemente nunca llegaron a aplicarse contra
-> `new_schema_archive`) queda completamente reemplazado. Ya no es solo el
-> alta de voluntarios de esta app — es el hub de administración de
-> **cuentas de sistema de las 3 apps** (Acopio/Comandas/Inventario
-> comparten el mismo `person_credentials`).
+Mismo formato visual que `ingresos.js` (tarjetas por día + modal de
+detalle, mismas clases CSS `.ing-*`/`.idc-*`/`.idm-*`), pero con la
+semántica invertida (cantidades en rojo con signo `-`) y con el **Destino**
+de cada entrega como dato central (viene de `comandas.notas`, mostrado en
+el detalle de cada registro de la línea de tiempo).
 
-No pasa por `sync.js`/`db.js`/`store.js`: hace `fetch` directo contra las
-RPC `create_user`/`list_users`/`delete_user`/`update_user_role`/
-`admin_update_user_profile`/`admin_reset_password` de `new_schema_archive`
-(`Content-Profile` header, anon key — sin JWT, ver `05-autenticacion.md`),
-fuera del patrón offline-first del resto de la app (si no hay red, la
-operación simplemente falla, no se encola).
+**Fuente de datos**: `movement_items`/`movements` (igual que Ingresos e
+Historial), filtrado por `direction=out` y `note like '*- Egreso'`, con
+`comandas` embebido bajo `movements` (`comandas.movement_id → movements.id`)
+para traer el Destino. **Deliberadamente no usa `comanda_items`** — esa
+tabla guarda una foto fija del nombre del producto al momento de crear la
+comanda, que nunca se actualiza si el insumo se renombra o se fusiona con
+otro después (`merge_product`); `movement_items` → `products.name` es un
+join en vivo, así que un egreso viejo siempre refleja el nombre actual del
+insumo (incluido después de un merge), sin necesitar ninguna migración de
+datos.
 
-Dos vistas según el rol de la sesión (`auth.isAdmin()`):
+## `views/resumen.js` — Hero + estadísticas
 
-- **Admin**: título "Gestión de Usuarios". El formulario de alta incluye
-  selector de **rol** (`voluntario`/`coordinador`) y de **área**: un único
-  `<select>` con `recepcion`/`sala situacional`/`general` (nuevo
-  2026-07-28, ver abajo) + un `<optgroup>` con las 13 categorías de insumos
-  (`helpers.js#CATS`, todas — desde la reestructuración de categorías del
-  2026-07-26 ya no existe una categoría catch-all tipo "otros" que excluir
-  aquí) — ya **no** es texto libre (desde 2026-07-19, ver
-  [05-autenticacion.md](./05-autenticacion.md)). El listado (`list_users`)
-  muestra **todos** los no-admin del sistema (coordinadores de cualquier
-  área + voluntarios), con botones Editar y Eliminar por fila.
-  Al editar, si el área guardada ya no calza con ninguna opción válida
-  (un valor viejo de antes de esta restricción), `_areaOptionsHTML()`
-  agrega una opción temporal con ese valor para no reasignarlo en
-  silencio si el admin guarda sin tocar el selector.
-  - **Editar (extendido 2026-07-28)**: además de rol/área, el modal ahora
-    también edita **nombre**, **apellido**, **teléfono** y, opcionalmente,
-    **contraseña** (campo vacío = no se toca) de cualquier usuario — antes
-    solo tocaba rol/área. `editVolunteer(ci)` ya no recibe los campos por
-    parámetro del `onclick` inline: busca el registro completo (incluido
-    `phone_company_code`/`phone_number`, nuevas columnas de `list_users`)
-    en `_lastUsers`, el resultado cacheado de la última carga, para
-    precargar el formulario. Al guardar se llaman 3 RPC en secuencia —
-    `update_user_role` (rol/área), `admin_update_user_profile`
-    (nombre/apellido/teléfono) y, si se escribió algo,
-    `admin_reset_password` (contraseña) — cada una es su propio punto de
-    escritura en el servidor (`person_credentials` vs. `persons`/`phones`),
-    no una transacción atómica única; un fallo a mitad de camino dejar
-    parte ya guardada es un caso aceptado, no manejado con rollback.
-    `admin_reset_password` es distinto de `update_own_password`
-    (`05-autenticacion.md`, "Mi perfil"): ese es autoservicio y exige la
-    contraseña actual; este lo usa un admin/coordinador sobre la cuenta de
-    **otra** persona y no pide nada más que el permiso ya validado sobre
-    ese target.
-- **Coordinador**: título "Mis Voluntarios". Sin selector de rol/área en el
-  alta — el formulario solo pide cédula/nombre/apellido/teléfono/contraseña,
-  y el backend fuerza `role=voluntario` + el área del propio coordinador
-  (ignora cualquier área que se le mande). El listado (`list_users`, ya
-  recortado del lado del servidor) solo trae voluntarios de su misma área.
-  Sin botón Editar (nada que editar: rol/área quedan siempre fijos para lo
-  que un coordinador puede crear) — solo Eliminar.
+Pestaña por defecto al iniciar sesión.
 
-Ambos roles llaman siempre con `p_actor_ci: auth.ci()` — las RPC son las
-que deciden qué se puede hacer, replicando del lado del servidor las reglas
-de `00-plan-general.md` §4.3 ("un coordinador nunca crea coordinadores",
-etc.), no solo ocultando controles en el cliente.
+- **Hero "Centro Operativo"** (`.hero`): marca de agua = `APP_NAME_BOLD`
+  (branding.js); el título "Centro Operativo" en sí es texto fijo (no
+  parametrizado); subtítulo = `HERO_DESCRIPTION` (branding.js); tres pills
+  — usuarios activos (async, `store.countActiveUsers()`), insumos bajo
+  umbral, avisos (`store.activeCommunications.length`). Fondo
+  `background:var(--amber)`, sigue `--brand-primary` automáticamente.
+- **Tarjetas de estadísticas**: unidades totales, categorías, bajo umbral,
+  usuarios activos.
+- **Desglose por categoría**: barra proporcional por categoría
+  (`store.statsByCat()`), con enlace "Ver todo →" a Insumos.
+- **Comunicados recientes**: top-3 `store.activeCommunications`, solo
+  lectura (resolver vive en la propia pestaña Comunicados), enlace "Ver
+  todos →".
 
-**Hallazgo real al implementar, no anticipado por el sub-plan original**:
-`persons.phone_id` es `NOT NULL` en el esquema real — `create_user` exige
-también `p_phone_company_code`/`p_phone_number` (por eso el formulario de
-alta sigue pidiendo teléfono, con el mismo selector de código de operadora
-+ 7 dígitos que ya tenía la versión vieja). Otro hallazgo: `anon` no tiene
-`SELECT` directo sobre `person_credentials` (correcto por seguridad, el
-hash de password no debe exponerse vía REST) — por eso hizo falta la RPC
-`list_users` nueva, que el plan original tampoco incluía.
+## `views/comunicados.js` — Avisos internos
 
-**Área "General" (nuevo 2026-07-28)**: tercera área fija junto a
-`recepcion`/`sala situacional` (ver `supabase-migrations/
-20-area-general-y-edicion-usuarios-2026-07-28.sql`, carpeta hermana a los 3
-repos) para coordinadores sin categoría de insumos propia — a diferencia de
-esas otras 2, **no** está en `DENIED_COORD_AREAS` (`auth.js`), así que sí
-entra a Inventario. Su restricción no es de acceso a la plataforma sino de
-qué puede hacer dentro de ella: consulta el catálogo/bitácora/resumen
-completos (`store.visibleItems()` deja de filtrar por área cuando
-`auth.isGeneral()`, igual que para admin) pero nunca los modifica
-(`auth.canEditInventory()` — sin Ingreso Rápido, sin los botones −/+/eliminar
-de Conteo, sin borrar registros de Bitácora, sin "Subir todo a la nube" de
-Resumen) y puede despachar cualquier área en la pestaña Despachos
-(`list_despachos_pendientes`/`marcar_despacho_entregado` le dan el mismo
-alcance que a `admin` del lado del servidor). Ver
-[05-autenticacion.md](./05-autenticacion.md) para el detalle de RBAC.
+- Modelo: `{id, titulo, cuerpo, urgencia, autor, activo, fecha}`.
+  `autor` nunca es texto libre: se calcula como `"Nombre - Área"` (o
+  `"Administrador"`) desde la sesión activa.
+- Publicar: cualquier admin/coordinador (`#m-comm`, modal genérico de
+  `components/modal.js`). Resolver (marcar `activo:false`): solo admin.
+- Filtros: todos / info / urgente / crítico / resueltos.
+- Polling cada 25s (`initComunicados`): recarga, detecta comunicados
+  nuevos desde la última lectura y muestra un toast (sin bombardear con el
+  backlog en la primera carga tras un login), actualiza el badge del nav
+  (`#nb-comms`/`#nb-comms-mobile`).
 
-Nota de implementación heredada: sigue usando `window.editVolunteer`/
-`window.deleteVolunteer` como funciones globales para poder invocarlas
-desde atributos `onclick` inline generados en el template string.
+## `views/voluntarios.js` — Usuarios (admin-only)
 
-## `views/despachos.js` — Despachos por área (nuevo 2026-07-24)
+Pestaña oculta del nav para cualquier cuenta que no sea admin (ver
+[02-arquitectura-frontend.md](./02-arquitectura-frontend.md#rbac-de-navegación-applyrbac);
+el mensaje interno "Solo para administradores" se conserva como respaldo
+por si se llega acá de otra forma).
 
-Pestaña ajena al resto de la app: no pasa por `store.js`/`db.js`/`sync.js` (no
-es parte del motor de conteo offline-first), es de escritura directa contra
-Supabase apenas hay conexión — mismo patrón que `voluntarios.js` (su propio
-`_headers()`/`_rpc()` duplicado, sin abstraer un helper compartido, mismo
-criterio del resto del proyecto de preferir la pequeña duplicación a una
-abstracción prematura entre 2 archivos).
+Separa dos cosas que antes eran un solo paso:
 
-Cada ítem de una comanda de UCVComandas (origen `manual`/`personal` — Entrega
-Rápida nunca genera despachos, se entrega en mano en el momento de la carga)
-es un despacho pendiente hasta que el coordinador cuya `area`
-(`person_credentials.area`) coincide con la categoría del producto
-(`products.type`) lo confirma. GBSInventario **nunca llama al backend de
-UCVComandas** — ambos sistemas solo comparten la base Postgres — así que esta
-vista pega directo contra 2 RPC `SECURITY DEFINER` nuevas (`new_schema_archive`,
-ver `supabase-migrations/12-rpc-despachos-2026-07-24.sql` en la carpeta
-hermana a los 3 repos, y la sección "Flujo de despachos por área" en
-`UCVComandas/documentation/01-arquitectura.md`):
+1. **Datos de la persona** (nombre/apellido/teléfono/cédula) — RPCs
+   normales (`create_person`, `admin_update_person`), columnas de
+   `persons`, sin necesitar la Admin API.
+2. **Acceso** (cuenta de Auth, rol/área/correo, contraseña) — exige la
+   Admin API (`service_role` key), vive en la Edge Function
+   `supabase/functions/manage-users`, nunca en una RPC alcanzable con la
+   sola anon/authenticated key.
 
-- **`list_despachos_pendientes(p_actor_ci)`**: admin ve los despachos de
-  cualquier área; coordinador solo los de la suya, salvo el de área
-  `general` (nuevo 2026-07-28), que también ve todas — el filtro lo resuelve
-  la propia RPC del lado del servidor, la vista no vuelve a filtrar en
-  cliente.
-  Devuelve, por cada ítem pendiente, el nombre del producto, la cantidad,
-  la unidad, la categoría, el nombre del solicitante (o "Sin solicitante" si
-  la comanda no tiene uno asignado) y `solicitado_en` (`created_at` de la
-  comanda — la hora en que se generó la solicitud, no la del despacho).
-- **`marcar_despacho_entregado(p_actor_ci, p_item_id)`**: botón "Entregar" por
-  fila. La RPC valida de nuevo el área (no confía solo en que la UI ya
-  filtró) y, si era el último ítem pendiente de esa comanda, la avanza sola a
-  `despachada` del lado del servidor — la vista no necesita saber nada de eso,
-  solo recarga la lista tras el `POST` exitoso.
+**Alta** (`#vol-form`): cédula, nombre, apellido, teléfono, correo,
+contraseña, área — un solo submit hace `create_person` (RPC) seguido de
+`grant_login` (Edge Function; rol siempre `coordinador`, un admin nuevo se
+crea directo contra la base).
 
-`renderDespachos(hostEl)` arma el shell una sola vez (`loaded`, mismo patrón
-que `voluntarios.js`) con un botón "Actualizar" manual y un subtítulo que
-muestra el área activa (`auth.area()`) o "Todas las áreas" para admin **y
-para el coordinador de "General"** (`auth.isGeneral()`, nuevo 2026-07-28 —
-ver `04-vistas-ui.md#views/voluntarios.js` y `05-autenticacion.md`): ambos
-tienen el mismo alcance de "todas las áreas" del lado del servidor, el
-cliente solo refleja ese rótulo. Fila vacía: "No hay despachos pendientes
-por ahora". Errores de la RPC (incluidos los de permiso) se muestran inline
-en la lista o vía `toast.err`, según si ocurren al cargar o al confirmar.
+**Edición** (`#vol-edit-modal`, `window.editVolunteer(ci)`) — edita **toda**
+la información de un usuario existente: nombre, apellido, **cédula**,
+teléfono, correo, área y (opcional) contraseña. Al guardar:
 
-### Notificación de despachos nuevos + badge (nuevo 2026-07-24)
+1. `admin_update_person` (RPC) — nombre/apellido/teléfono, y si la cédula
+   cambió, la renombra (ver abajo).
+2. `update_email` (Edge Function) + `update_area` (Edge Function) + si se
+   escribió algo, `reset_password` (Edge Function) — usando ya la cédula
+   **nueva**.
 
-A diferencia del resto de la app, esto **no depende de que la pestaña esté
-abierta**: `initDespachosWatcher()` (llamado una sola vez desde `boot()` en
-`app.js`, justo después de `auth.init()`) arranca un sondeo de fondo — mismo
-espíritu que el timer de red de seguridad de `sync.js` (30s), acá cada 25s,
-sin relación real entre esos dos números — que llama a
-`list_despachos_pendientes` sin importar qué página esté activa. Dos efectos
-visibles:
+Renombrar la cédula es delicado: es la clave primaria de `persons` y está
+referenciada por FK desde más de una decena de tablas (comandas,
+movements, conductores, ubicaciones, etc.). Todas esas FKs se migraron a
+`on update cascade` (recorriendo `pg_constraint`, sin listar tablas a
+mano — ver [08-base-de-datos-PENDIENTE.md](./08-base-de-datos-PENDIENTE.md)),
+así que un solo `update persons set ci = ...` dentro de `admin_update_person`
+reatribuye automáticamente todo el historial de esa persona a la nueva
+cédula.
 
-- **Badge numérico** en el botón "Despachos" de ambas barras de navegación
-  (`#dsp-badge-desktop` en `.tn-nav`, `#dsp-badge-mobile` superpuesto en la
-  esquina del ícono de `.m-bottomnav`) — total de despachos pendientes en
-  este momento, no un contador de "no leídos". Estilado 100% inline en
-  `index.html` (mismo criterio que `voluntarios.js`, sin agregar clases
-  nuevas a `styles.css`), oculto por defecto (`display:none`) hasta el
-  primer sondeo.
-- **Toast** (`toast.info`) cuando aparece al menos un ítem nuevo desde el
-  último sondeo — un solo toast con la cantidad ("N despachos nuevos
-  pendientes"), nunca uno por ítem, aunque hayan llegado varios a la vez en
-  la misma corrida (se comparan sets de `item_id` entre corridas,
-  `_seenIds` en el módulo).
+**Listado** (`list_users_with_access`, RPC): todos los usuarios con acceso
+(rol no nulo, excluye admins), con nombre/correo/rol/área/teléfono/activo.
+Por fila: Editar, Activar/Desactivar (`set_active`, baneo nativo de Auth,
+reversible sin reconfigurar nada), Revocar (`revoke_access`, limpia rol/área
+y cierra sesión de inmediato — no borra la persona ni su cuenta, se puede
+volver a otorgar acceso después).
 
-La primera lectura tras un login (`_seenIds === null`) **no dispara toast**
-— solo establece la línea base en silencio, para no bombardear con el
-backlog completo de despachos pendientes cada vez que alguien abre sesión;
-el badge sí se pinta de una con el total real desde ese primer sondeo.
-`auth.onChange(_backgroundCheck)` fuerza un sondeo inmediato en cada
-login/logout y resetea `_seenIds`/oculta el badge si la sesión pierde acceso
-a la plataforma — evita que la cuenta de un coordinador se filtre a la
-sesión de otro en un dispositivo compartido. Fallos de red del sondeo de
-fondo son silenciosos (sin `toast.err`, a diferencia de `loadDespachos()`)
-para no generar ruido cada 25s ante un corte puntual.
+## `views/despachos.js` — oculta, código dormido
 
-## `components/toast.js` — notificaciones
+Pestaña completamente oculta del nav para todos los roles (ver
+[02-arquitectura-frontend.md](./02-arquitectura-frontend.md)) — sin uso real
+con el estado actual del sistema. El módulo y las RPCs que consume
+(`list_despachos_pendientes`/`marcar_despacho_entregado`) siguen intactos,
+más rápido de reactivar (quitar la regla CSS que la oculta) que de rehacer
+si algún día hace falta un flujo de despacho por área.
 
-Componente mínimo: un contenedor `.toast-wrap` creado on-demand y anexado a
-`document.body`. Tres helpers (`toast.ok`, `toast.err`, `toast.info`) que
-crean un `<div>` con clase de color, lo animan con una clase `.in` (via
-`requestAnimationFrame` para permitir la transición CSS) y lo remueven tras
-2.6s.
+## `views/admin.js` — login wall + panel de perfil
+
+- **`renderLoginWall(container)`** — formulario **correo + contraseña**
+  (`#adm-email`/`#adm-pass`), llama `auth.login(email, password)`.
+- **Panel** (botón de perfil, cualquier sesión):
+  1. **"Mi perfil"** — nombre/apellido/teléfono propios, vía RPC
+     `update_own_profile` (autoservicio, solo la fila del propio usuario).
+     Cédula visible mostrada de solo lectura (no editable — solo un admin
+     puede renombrarla, y solo la de otro usuario, desde Usuarios).
+  2. **"Cambiar contraseña"** — autoservicio, `auth.updatePassword()`
+     (Supabase Auth: la sesión ya es prueba de identidad, no pide la
+     contraseña actual).
+  3. **Admin-only — "Categorías de insumos"**: CRUD completo (listar,
+     crear, renombrar vía `promptDialog`, borrar vía `confirmDialog`
+     danger) sobre `store.categories`.
+  4. **Admin-only — "Respaldos del conteo"**: lista de checkpoints
+     (`checkpoints.js`) con crear/restaurar/borrar, confirmación danger
+     para restaurar.
+  5. Cerrar sesión.
+
+## `components/toast.js`, `components/modal.js`, `components/confirm.js`
+
+- **`toast.js`** — `toast.ok/err/info(msg)`: crea un `<div>` en
+  `.toast-wrap` (on-demand), lo anima con `.in` y lo remueve tras ~2.6s.
+- **`modal.js`** — gestor genérico de `.modal-ov` (usado por el modal de
+  Comunicados): `modal.open(id)`/`close(id)`/`closeAll()`, `modal.init()`
+  engancha click-fuera, Escape y cualquier `[data-close]`. `admin.js` tiene
+  su propio sistema de modal paralelo (`#adm-modal`), no usa este.
+- **`confirm.js`** — `confirmDialog({title, body, confirmText, cancelText,
+  danger})` y `promptDialog({title, label, value, ...})`, reemplazos
+  Promise-based de `confirm()`/`prompt()` nativos del navegador — **ninguna
+  confirmación de la app usa el diálogo nativo del navegador**. Comparten
+  un overlay `#confirm-modal` con z-index más alto que `.adm-ov`, para
+  poder stackear sobre un modal admin ya abierto (p.ej. "Eliminar" dentro
+  de "Editar insumo").

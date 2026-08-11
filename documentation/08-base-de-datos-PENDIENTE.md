@@ -1,147 +1,186 @@
-# 8. Base de datos — ya no pendiente (resuelto 2026-07-19)
+# 8. Base de datos (nombre de archivo histórico — contenido ya no pendiente)
 
-> Este documento quedaba **deliberadamente sin desarrollar** hasta tener
-> acceso a las credenciales reales de la instancia de Supabase. Ese acceso
-> llegó como parte de la unificación de acceso con UCVAcopio/UCVComandas
-> (`00-plan-general.md`/`02-inventario.md`, carpeta hermana a los 3 repos):
-> Inventario **cortó conexión** del proyecto Supabase externo
-> (`bwdipsshosclqoxbjbho`) al proyecto compartido con esos 2 sistemas
-> (`fndrmxjykrtoddhstbyv`, esquema `new_schema_archive`). Todo lo de abajo
-> está verificado contra esa base real — con consultas directas de solo
-> lectura y, para las RPCs, con pruebas end-to-end reales (usuarios/
-> productos sintéticos creados y borrados en la misma sesión). El nombre
-> del archivo se mantiene (varios documentos lo enlazan por esta ruta) pero
-> ya no describe un hueco pendiente.
+> El nombre del archivo se conserva porque varios documentos lo enlazan por
+> esta ruta; el contenido no describe nada pendiente. Esquema canónico:
+> [`supabase/new-project-schema.sql`](../supabase/new-project-schema.sql)
+> (fresh install completo) + migraciones incrementales fechadas en
+> `supabase/YYYY-MM-DD-*.sql` para el proyecto que ya está vivo. Proyecto
+> Supabase **propio** de GBSInventario (credenciales en `js/config.js`),
+> sin conexión a ningún otro sistema.
 
-## Qué había en el repo, y qué de eso resultó correcto
+## Mapa del esquema (`new-project-schema.sql`)
 
-La tabla de `supabase/*.sql` que describía la versión anterior de este
-documento sigue siendo un buen mapa de qué prueba cada script — con dos
-correcciones reales encontradas al cortar:
+Secciones, en orden:
 
-| Archivo | ¿Coincidía con la BD real? |
-|---|---|
-| `supabase-setup.sql` | El diseño base (`products`/`inventory`/`movements`/`movement_items`, trigger de ajuste de stock) sí coincide en espíritu con `new_schema_archive` — pero los nombres/columnas exactos no son 1:1, ver abajo. |
-| `fix-unmark-delete.sql` (`uncount_item`/`delete_count`) | El diseño (revertir/recalcular `last_counted_at`) es correcto, pero **la implementación tuvo que cambiar**: `new_schema_archive` ya tiene triggers propios (`trg_movement_items_apply`, `trg_movement_items_update_delete`) que ajustan `inventory.qnty` automáticamente en INSERT/UPDATE/DELETE de `movement_items` — el diseño viejo de Inventario no tenía ese trigger para DELETE y revertía `qnty` a mano dentro de `delete_count`; portarlo literal habría duplicado el ajuste. |
-| `realtime-migration.sql` | Apuntaba al proyecto externo viejo — `new_schema_archive.products`/`inventory` **no** estaban en la publicación `supabase_realtime` (confirmado por consulta directa); se agregaron en el corte. |
-| `voluntarios_migration.sql` (columnas `status`/`turno`/`departamento` en `persons`) | **No existen** en `new_schema_archive.persons` — la vista de Voluntarios que las usaba se reescribió por completo (ver `04-vistas-ui.md`), no se intentó migrar esas columnas. |
-| `schema.txt` | Confirmado como referencia de un esquema distinto (el externo viejo) — no se usó para nada del corte. |
+1. **Enums** — `movement_direction`, `request_status`, `person_role`,
+   `person_categoria`, `comanda_status`, `comanda_origen`,
+   `comanda_imagen_tipo`, `ubicacion_*`/`tipo_*` (dominio dormido).
+2. **Núcleo** — catálogo, inventario, movimientos, personas.
+3. **Dominio comandas** — `comandas`/`comanda_items` y satélites.
+4. **Dominio ubicaciones**, **5. Dominio conductores**, **6. Personas
+   complementarias** (`ucevistas`/`afectados`/`facultades`/`carreras`) —
+   heredados de un sistema hermano, dormidos (ver abajo).
+7. **Triggers** — `set_updated_at` (genérico), `create_inventory_row`
+   (auto-crea la fila de `inventory` por producto nuevo),
+   `apply_movement_item`/`apply_movement_item_changes` (ajustan
+   `inventory.qnty` en INSERT/UPDATE/DELETE de `movement_items` —
+   `apply_count`/`uncount_item`/`delete_count` **no** tocan `qnty` a mano,
+   el trigger ya lo hace), `movement_has_items` (todo movimiento necesita
+   ≥1 línea), más triggers menores de `requests`/`phones`.
+8. **Autenticación** — helpers de rol/área a partir del JWT de Supabase
+   Auth: `current_role()`, `current_area()`, `is_admin()`,
+   `is_coordinador()`, `current_person_ci()`, `current_category_id()`,
+   `can_access_category(p_category_id)`, `actor_note(p_tipo)` (arma
+   `"Nombre - Área - Tipo"`, el formato que lee Historial/Ingresos/Egresos
+   para inferir el tipo de movimiento), `link_person_login` (solo
+   invocable por la Edge Function), `create_person`.
+9. **Categorías** — `create_category`/`update_category`/`delete_category`
+   (admin-only; borrar bloquea si aún hay productos asignados, y despoja
+   `role`/`area` de cualquier coordinador de esa categoría),
+   `list_users_with_access` (admin-only, join `persons`+`auth.users`),
+   `admin_update_person` (nombre/apellido/teléfono/cédula de cualquier
+   persona — puede renombrar la cédula misma, ver abajo),
+   `count_active_users`, `update_product_category`, `update_own_profile`
+   (autoservicio).
+10. **Conteo de inventario** — `apply_count`, `uncount_item`,
+    `delete_count`.
+11. **Egreso Rápido** — `create_comanda_rapida` (no usa `apply_count`;
+    genera comanda + movimiento en una transacción, con reserva de stock
+    atómica), `merge_product` (fusiona un insumo duplicado, reatribuye
+    `movement_items` al destino), vistas `persons_solicitantes`/
+    `ubicaciones_genericas_selectable` (sin uso activo desde el cliente —
+    ver [04-vistas-ui.md](./04-vistas-ui.md#viewsegresorapidojs--egreso-rápido)).
+12. **Despachos** — `list_despachos_pendientes()`,
+    `marcar_despacho_entregado(p_item_id)` — código vigente, pestaña
+    oculta del lado del cliente (ver
+    [04-vistas-ui.md](./04-vistas-ui.md#viewsdespachosjs--oculta-código-dormido)).
+13. **Row Level Security** — ver abajo.
+14. **Grants de tabla** — `USAGE`/`SELECT` base a `authenticated` en casi
+    todo; `INSERT`/`UPDATE` limitados a `products, persons, phones,
+    person_status, comms, checkpoints, categories` (el resto de la
+    escritura pasa por RPC `SECURITY DEFINER`); `DELETE` solo en
+    `checkpoints, categories`. `comandas`/`comanda_items` **no** tienen
+    grants directos — todo pasa por `create_comanda_rapida`/
+    `marcar_despacho_entregado`. `anon` no tiene nada — ninguna ruta
+    anónima en toda la app.
 
-## Esquema real (`new_schema_archive`) contra el que habla la app desde el corte
+## Tablas activas vs. dormidas
 
-Confirmado por consulta directa (`information_schema.columns` + inspección
-de triggers/constraints reales), no inferido de archivos `.sql` sueltos:
+**Activas** (con policy real de categoría/rol, escritas por los flujos
+vigentes del cliente): `categories`, `products`, `inventory`, `movements`,
+`movement_items`, `checkpoints`, `comms`, `persons`, `phones`,
+`person_status`, `comandas`, `comanda_items` (activas desde que existe
+`create_comanda_rapida` — no son parte del dominio dormido).
 
-- **`products`**: `id BIGINT`, `name`, `type` (enum
-  `product_type`, ya en español — confirmado por UCVAcopio,
-  `06-esquema-base-datos.md` de ese repo), `created_at`, `updated_at`,
-  `metadata JSONB`, `umbral INTEGER`, `client_id TEXT NOT NULL`,
-  `deleted_at`, y **`unidad TEXT NOT NULL DEFAULT 'und'`** (agregada en el
-  corte, `supabase-migrations/04-columnas-inventario-2026-07-18.sql` — la
-  columna `measure` original se eliminó, ver
-  `supabase-migrations/18-drop-column-measure-*.sql`).
-- **`inventory`**: `product_id BIGINT` (PK, FK a `products`), `qnty
-  INTEGER`, y **`last_counted_at TIMESTAMPTZ`**/**`last_counted_by TEXT`**
-  (agregadas en el mismo script que `unidad`).
-- **`movements`**: `id`, `direction` (enum `in`/`out`), `destination`,
-  `received_by`/`delivered_by` (FK a `persons.ci`, no `approved_by` como
-  asumía algún borrador viejo), `occurred_at`, `note`, `client_op_id TEXT`
-  (nullable, no `UNIQUE` a nivel de constraint explícito pero usado como
-  tal por convención de idempotencia).
-- **`movement_items`**: `id`, `movement_id` (FK `ON DELETE CASCADE`),
-  `product_id` (FK `ON DELETE RESTRICT`), `qnty`.
-- **Triggers ya existentes** (no los creó este repo, son de
-  `new_schema_archive` compartido): `trg_movement_items_apply` (AFTER
-  INSERT, ajusta `inventory.qnty` — también actualiza `requests` si
-  aplica, algo que el diseño viejo de Inventario no tenía) y
-  `trg_movement_items_update_delete` (AFTER UPDATE OR DELETE, revierte/
-  ajusta `inventory.qnty`). Por esto, `apply_count`/`uncount_item`/
-  `delete_count` del corte **no** ajustan `inventory.qnty` a mano en el
-  camino de inserción/borrado — el trigger ya lo hace, y hacerlo dos veces
-  sería un bug.
-- **`persons`**: `ci BIGINT` (PK), `name`, `surname`, `phone_id BIGINT`
-  (FK a `phones.id`, **`NOT NULL`** — hallazgo real, ver abajo),
-  `created_at`, `updated_at`, `categoria` (enum, de UCVComandas — no
-  usado por Inventario).
-- **`phones`**: `id BIGINT` (PK, serial), `company_code`, `number` —
-  `UNIQUE(company_code, number)`.
-- **`person_credentials`**: `ci` (PK/FK a `persons.ci`), `password`,
-  `role` (enum `person_role`: `admin`/`coordinador`/`voluntario`),
-  `area` (`text`, nullable), `created_at`, `updated_at`. Ver
-  [05-autenticacion.md](./05-autenticacion.md) para el detalle completo —
-  esta tabla y su RPC de login son compartidas con UCVAcopio/UCVComandas,
-  no propias de Inventario.
+**Dormidas** (heredadas de un sistema hermano por fidelidad de esquema,
+sin flujo propio de GBSInventario que las pueble hoy — policy genérica
+"lectura para cualquier sesión, escritura solo admin", aplicada en bloque
+vía un `DO` loop en vez de una por una): `comandas_viejas`,
+`comanda_imagenes`, `product_aliases`, `municipios`, `parroquias`,
+`rutas_ejes`, `ubicaciones`, `ubicacion_contactos`, `ubicacion_imagenes`,
+`ubicacion_snapshots`, `conductores`, `conductor_vehiculos`,
+`conductor_dias`, `conductor_horarios`, `conductor_zonas`, `facultades`,
+`carreras`, `ucevistas`, `afectados`. `requests` tiene su propio esquema y
+triggers wireados (paga automáticamente contra un `movement` de entrada)
+pero ningún RPC/vista del cliente la lee o escribe hoy — dormida en la
+práctica aunque no esté en la lista explícita del script.
 
-## RLS / grants
+## Tablas núcleo
 
-⚠️ **Contradicción sin resolver (detectada 2026-07-28)**: esta sección
-afirmaba (abajo, sin tocar desde que se escribió) que `anon` tenía
-`SELECT`/`INSERT`/`UPDATE`/`DELETE` directo sobre `products`/`inventory`/
-`movements`/`movement_items`/`persons`/`phones` con **RLS deshabilitada**.
-Corrección del usuario del 2026-07-28, al implementar el área "General" y
-la edición extendida de usuarios (`05-autenticacion.md`): **RLS está activa
-en TODAS las tablas de este esquema**, sin excepción — contradice
-directamente lo que sigue. No se pudo re-verificar contra la base real
-desde este repo (sin acceso a Supabase Studio/`information_schema` desde
-acá); dos lecturas posibles, sin resolver:
+- **`categories`**: `id`, `nombre` — reemplaza por completo cualquier enum
+  fijo de categorías; cada organización crea/edita/borra las suyas
+  (admin-only) desde `admin.js`.
+- **`products`**: `id`, `client_id` (clave de upsert desde el cliente),
+  `name`, `category_id` (FK a `categories`), `unidad`, `umbral`,
+  `updated_at`, `deleted_at`.
+- **`inventory`**: `product_id` (PK/FK), `qnty`, `last_counted_at`,
+  `last_counted_by` — una fila por producto, creada automáticamente por
+  trigger al insertar el producto.
+- **`movements`** / **`movement_items`**: el ledger genérico de
+  entradas/salidas — Ingreso Rápido, ajustes de Insumos y Egreso Rápido
+  escriben acá (directa o indirectamente); Historial/Ingresos/Egresos leen
+  de acá.
+- **`persons`**: `ci` (PK), `name`, `surname`, `phone_id` (FK, `NOT NULL`),
+  `categoria` (enum heredado, sin uso propio de GBSInventario),
+  `auth_user_id` (`NULL` = persona sin inicio de sesión).
+- **`phones`**: `id`, `company_code`, `number`, `UNIQUE(company_code, number)`.
+- **`comandas`** / **`comanda_items`**: documento de entrega generado por
+  `create_comanda_rapida` (`origen='rapida'`) — `comandas.notas` guarda el
+  "Destino" de texto libre; `comanda_items.producto`/`producto_id` son una
+  **foto fija** del momento de creación (no se actualizan si el insumo se
+  renombra/fusiona después — por eso `views/egresos.js` lee de
+  `movement_items` en vez de acá, ver
+  [04-vistas-ui.md](./04-vistas-ui.md#viewsegresosjs--reporte-de-entregas)).
+- **`comms`**: avisos internos (Comunicados) — RLS abierta a cualquier
+  sesión autenticada, sin filtro de área.
+- **`checkpoints`**: existe en el esquema remoto pero **no** se usa desde
+  el cliente — los checkpoints de respaldo de esta app viven solo en
+  IndexedDB local (`js/checkpoints.js`), no se sincronizan a Supabase.
 
-1. Esta sección estuvo **mal desde que se escribió** (RLS siempre estuvo
-   activa, alguien confirmó lo contrario por error), y todo lo que asume
-   "escritura directa sin RPC" contra `persons`/`phones` (ej. "Mi perfil"
-   en `05-autenticacion.md`) probablemente **nunca funcionó** en producción.
-2. RLS se activó **después** de escribirse esta sección (cambio de
-   configuración posterior en Supabase, no reflejado acá), y ese código
-   funcionaba hasta entonces pero dejó de hacerlo en algún punto sin que
-   nadie lo notara/documentara.
+## RLS
 
-Por las dudas, el trabajo nuevo del 2026-07-28
-(`admin_update_user_profile`/`admin_reset_password`, ver
-`supabase-migrations/20-area-general-y-edicion-usuarios-*.sql`) se hizo
-como RPC `SECURITY DEFINER`, no como REST directo. **"Mi perfil"
-(`js/views/admin.js`) se corrigió el mismo día** con el mismo criterio —
-`get_own_phone`/`update_own_profile`
-(`supabase-migrations/21-fix-mi-perfil-rpc-2026-07-28.sql`, ver
-`05-autenticacion.md`) — así que ya no depende de qué lectura de la
-contradicción de arriba sea la correcta: funciona sea cual sea el estado
-real de RLS en `persons`/`phones`. Lo que queda sin resolver/verificar es
-el resto de la afirmación original (`products`/`inventory`/`movements`/
-`movement_items`), que ningún cambio de esta fecha tocó — el resto de la
-app (`sync.js`, `store.js`, `views/despachos.js`, etc.) sigue asumiendo
-escritura REST directa sobre esas tablas.
+Activa en **todas** las tablas de este esquema, sin excepción. Patrón para
+las tablas core (`products`/`inventory`/`movements`/`movement_items`/
+`comandas`/`comanda_items`/`categories`): lectura filtrada por categoría
+vía `can_access_category()`, escritura **solo** a través de una RPC
+`SECURITY DEFINER` que valida el rol/área del actor por dentro (nunca un
+`INSERT`/`UPDATE`/`DELETE` directo del cliente sobre esas tablas, salvo
+`products` que sí tiene grant directo para el upsert de sync — igual
+sujeto a RLS por categoría). `persons`/`phones`: cualquier sesión lee,
+solo admin escribe directo (la escritura de un coordinador sobre su propia
+fila pasa por `update_own_profile`, RPC). `anon` no tiene acceso a nada.
 
-Lo que sigue es el texto original, sin verificar desde esa fecha:
+## Renombrar una cédula (`admin_update_person` + migración de FKs)
 
-> `anon` tiene `SELECT`/`INSERT`/`UPDATE`/`DELETE` directo sobre `products`/
-> `inventory`/`movements`/`movement_items`/`persons`/`phones` — **RLS
-> deshabilitada** en esas tablas (no hay políticas que filtren filas). El
-> control de "quién puede hacer qué" es 100% del lado del cliente
-> (`js/auth.js`, ver `05-autenticacion.md`) — decisión de arquitectura
-> explícita, documentada en `00-plan-general.md` §2 de la carpeta hermana,
-> no un hueco de seguridad sin resolver.
+`persons.ci` es la PK y está referenciada por FK desde más de una decena
+de tablas. La migración `2026-08-11-editar-usuario-completo.sql` (y el
+bloque equivalente en `new-project-schema.sql`, para que un fresh install
+quede igual) recorre `pg_constraint` buscando toda FK cuyo `confrelid` sea
+`persons`, y la recrea con `on update cascade` preservando su acción
+`on delete` original:
 
-La única tabla con acceso realmente restringido a nivel de base — bajo
-cualquiera de las 2 lecturas de arriba — es `person_credentials`: `anon`
-**no** tiene `SELECT` directo sobre ella (correcto — el hash de password no
-debe exponerse vía REST), por eso hacen falta las RPCs `SECURITY DEFINER`
-(`person_login`, `create_user`, `list_users`, etc.) para leer/escribirla.
+```sql
+do $$
+declare rec record;
+begin
+  for rec in
+    select con.conname, cl.relname as table_name, pg_get_constraintdef(con.oid) as def
+    from pg_constraint con
+    join pg_class cl on cl.oid = con.conrelid
+    where con.contype = 'f' and con.confrelid = 'public.persons'::regclass
+  loop
+    execute format('alter table public.%I drop constraint %I', rec.table_name, rec.conname);
+    execute format('alter table public.%I add constraint %I %s on update cascade', rec.table_name, rec.conname, rec.def);
+  end loop;
+end $$;
+```
 
-## Hallazgo no anticipado por el plan original: `persons.phone_id NOT NULL`
+Con eso, `admin_update_person` puede hacer un simple
+`update persons set ci = <nueva> where ci = <vieja>` y Postgres reatribuye
+automáticamente todo el historial de esa persona (comandas, movimientos,
+etc.) sin tocar tabla por tabla a mano — y sin tener que mantener esa lista
+sincronizada si el esquema agrega otra FK hacia `persons(ci)` en el futuro.
 
-El sub-plan de la unificación de acceso (`03-acopio.md`/`02-inventario.md`)
-especificaba `create_user(p_actor_ci, p_ci, p_password, p_name, p_surname,
-p_role, p_area)` — 7 parámetros, sin teléfono. Al probar contra la BD real,
-esa firma **fallaba para cualquier usuario nuevo** porque
-`persons.phone_id` es `NOT NULL` (FK a `phones`) y la RPC no lo poblaba. Se
-corrigió agregando `p_phone_company_code`/`p_phone_number` (9 parámetros
-en total) — ver `supabase-migrations/06-fix-create-user-telefono-2026-07-18.sql`
-(carpeta hermana a los 3 repos). Esto es la razón real por la que el
-formulario de alta de usuarios (`04-vistas-ui.md`) sigue pidiendo teléfono.
+## Edge Function (`supabase/functions/manage-users`)
 
-## Volumen de datos real (al 2026-07-19)
+Única pieza del sistema que usa la Admin API de Supabase
+(`service_role` key) — crear/editar `app_metadata`/correo/contraseña de
+una cuenta de Auth no es alcanzable desde una RPC `SECURITY DEFINER`
+corriente. `requireAdmin()` valida el JWT de quien llama en cada request
+(nunca confía en el body). Acciones: `grant_login`, `update_area`,
+`update_email`, `revoke_access`, `revoke_by_area`, `reset_password`,
+`set_active` — ver el detalle de cada una en
+[05-autenticacion.md](./05-autenticacion.md#gestión-de-usuarios-viewsvoluntariosjs-admin-only).
+Redeploy manual tras tocar el archivo:
+`supabase functions deploy manage-users`.
 
-`products`: más de mil filas reales (catálogo del centro de acopio, migrado
-por un workstream aparte — ver `00-plan-general.md` §7). `person_credentials`:
-19 filas (5 `admin`, 7 `coordinador`, 7 `voluntario`, todos con
-`area='sala situacional'` al momento del corte de roles). No se hizo un
-conteo exhaustivo de `movements`/`movement_items` como parte de este
-trabajo — no era necesario para verificar que el motor de conteo funciona.
+## Migraciones incrementales (`supabase/*.sql`)
+
+Cada archivo fechado en la raíz de `supabase/` es una migración puntual ya
+aplicada contra el proyecto vivo, pensada para pegarse entera en el SQL
+Editor de Supabase. `new-project-schema.sql` es el único documento que
+debe quedar **siempre** consistente con el estado final acumulado (para
+que un fresh install no tenga que re-derivar el historial de parches) — al
+tocar el esquema, el cambio se hace en ambos lugares: el archivo fechado
+nuevo (para el proyecto ya vivo) y directo en `new-project-schema.sql`
+(para que un fresh install quede igual).

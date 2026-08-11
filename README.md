@@ -1,100 +1,127 @@
-# GBSInventario — Conteo Físico
+# GBSInventario — Gestión de Inventario
 
-App **independiente** del sistema AcopioUCV para hacer un **inventario físico real**
-de los insumos del centro de acopio. Nace porque el sistema de acopio tiene
-cantidades infladas (no se descontaron las entregas), así que aquí se cuenta
-desde cero lo que **realmente hay** y luego se carga de vuelta al acopio.
+PWA (Progressive Web App) en JavaScript vanilla — sin framework, sin
+bundler — para gestionar el inventario de insumos de una organización:
+catálogo por categorías, ingresos y egresos de stock, bitácora de
+movimientos, comunicados internos y gestión de usuarios. Pensada como
+**plantilla reutilizable**: nombre del sistema y paleta de colores se
+cambian en dos archivos (ver abajo), y el catálogo arranca vacío para que
+cada organización lo arme desde cero.
 
-Misma temática, mismo catálogo, mismo lenguaje visual y — desde el 2026-07-19 —
-**base de datos compartida** con AcopioUCV/UCVComandas (despliegue propio). Nada
-de lo que se cuenta aquí toca al sistema de acopio hasta que exportes los
-resultados.
+Backend propio en Supabase (Postgres + Auth + Realtime + PostgREST + una
+Edge Function) — sin conexión a ningún otro sistema.
 
 ## Cómo funciona
 
-- **Catálogo precargado en 0.** Los **1674 insumos** activos del acopio ya están
-  cargados, agrupados por categoría, todos en cantidad `0`. Se conserva el `id`
-  original de cada insumo para poder cruzar los conteos con el acopio.
-- **Agregado rápido (mobile-first).** Barra arriba de la vista de conteo: buscas
-  el insumo, escribes la cantidad y *Agregar* — suma al total (se puede acumular
-  varias veces) sin scrollear. Si no está en el catálogo, *Crear insumo nuevo*.
-- **Conteo físico.** El voluntario recorre las categorías y escribe la cantidad
-  real de cada insumo (fija el total exacto). Al registrar, queda marcado como
-  *contado*. Botones `+/−` y `Enter` para saltar al siguiente.
-- **Bitácora (log).** Cada registro de conteo queda apuntado con hora, insumo,
-  quién contó y cantidad, agrupado por día. Se puede **corregir/borrar** un
-  registro y el total del insumo se revierte automáticamente.
-- **Progreso.** Barra global (contados / total) y desglose por categoría en la
-  vista *Resumen*.
-- **Login obligatorio (cédula + contraseña).** No es Supabase Auth: valida
-  contra la RPC compartida `person_login` (`new_schema_archive`, hash bcrypt
-  del lado del servidor). Es la app más restrictiva de las tres — solo entran
-  `admin` y `coordinador` de un área que no sea la de AcopioUCV/UCVComandas;
-  no hay conteo libre sin sesión. Ver
+- **Catálogo desde cero.** `js/seed.js` está vacío a propósito — cada
+  organización crea sus propias categorías (admin, desde el panel de
+  perfil) y carga sus insumos vía Ingreso Rápido o importación de Excel.
+- **Ingreso Rápido (offline-first).** Busca el insumo, escribe la cantidad,
+  "Sumar" — se aplica localmente al instante y se sincroniza después. Si no
+  existe, "Crear insumo nuevo".
+- **Egreso Rápido (online-only).** Arma un carrito de insumos + un destino
+  de texto libre, y genera una comanda real con reserva de stock atómica
+  del lado del servidor — requiere conexión, no se encola.
+- **Insumos.** Quien tenga sesión con permiso de edición ajusta cantidades directo desde
+  cada tarjeta (`+`/`−`/input) o abre "Editar insumo" (nombre, categoría,
+  cantidad, umbral, fusionar con un duplicado, eliminar).
+- **Historial.** Cada movimiento (Recepción/Conteo/Egreso) queda apuntado
+  con hora, insumo, quién y cantidad, agrupado por día y filtrable por
+  tipo. Se puede corregir/borrar un registro puntual.
+- **Ingresos / Egresos.** Reportes de solo lectura por día, con una flecha
+  directa a Historial para ubicar y corregir un registro concreto.
+- **Comunicados.** Avisos internos (informativo/urgente/crítico).
+- **Resumen.** Hero de estado + estadísticas + desglose por categoría +
+  comunicados recientes. Pestaña por defecto al iniciar sesión.
+- **Login (correo + contraseña, Supabase Auth).** Solo `admin` y
+  `coordinador` (de una categoría real, o del área especial `general` —
+  consulta sin edición) tienen acceso. Ver
   [documentation/05-autenticacion.md](./documentation/05-autenticacion.md).
-- **Checkpoints / auto-respaldo.** Snapshots locales del conteo (auto cada ~6h si
-  hay algo contado, y manuales) con **restaurar**, para no perder un inventario a
-  medias. Viven en el panel de coordinador.
-- **Local-first.** Todo se guarda en el navegador (IndexedDB). Funciona sin
-  internet. Si hay credenciales de Supabase, además sincroniza para que varios
-  voluntarios cuenten a la vez.
-- **Exportar.** Desde *Resumen* → Excel con `id`, insumo, categoría, unidad y
-  cantidad contada — listo para cargar en el sistema de acopio.
+- **Checkpoints / auto-respaldo.** Snapshots locales del conteo (auto cada
+  ~6h si hay algo contado, y manuales) con restaurar, admin-only. Viven en
+  el panel de perfil.
+- **Local-first.** Todo se guarda primero en el navegador (IndexedDB).
+  Funciona sin internet para el conteo/Ingreso Rápido; sincroniza cuando
+  hay conexión.
+- **Exportar.** Excel desde Ingreso Rápido (herramientas admin) y desde
+  cada modal de detalle de día en Ingresos/Egresos.
+
+## Plantilla reutilizable
+
+Dos archivos concentran toda la personalización de marca:
+
+- **`js/branding.js`** — nombre del sistema y la descripción del hero de
+  Resumen.
+- **`css/styles.css` → `:root`** — `--brand-primary`/`--brand-secondary`;
+  el resto de la hoja deriva sus tintes de esos dos valores.
+
+Excepciones que sí hay que editar a mano al rebrandear (estáticas, leídas
+por el navegador/SO antes de que exista una página): `manifest.json` e
+`icon.svg`. Detalle completo en
+[documentation/01-vision-general.md](./documentation/01-vision-general.md).
 
 ## Estructura
 
 ```
 GBSInventario/
-├── index.html            · shell (sidebar + statusbar + nav móvil)
+├── index.html            · shell (topnav + statusbar + nav móvil)
 ├── manifest.json  sw.js  · PWA / offline
 ├── icon.svg
-├── supabase/             · esquema SQL histórico (proyecto externo viejo,
-│                           ya no en uso — ver documentation/08-base-de-datos-PENDIENTE.md)
 ├── build.js  vercel.json · genera js/env-config.js (DB_SCHEMA) en cada deploy
-├── css/styles.css        · tema heredado de AcopioUCV
+├── supabase/             · esquema SQL (new-project-schema.sql = canónico,
+│                           YYYY-MM-DD-*.sql = migraciones incrementales)
+│   └── functions/manage-users/ · Edge Function (Admin API)
+├── css/styles.css        · hoja de estilos única, paleta vía --brand-*
 └── js/
-    ├── app.js            · bootstrap + navegación
-    ├── config.js         · credenciales del proyecto Supabase compartido
+    ├── app.js            · bootstrap + navegación + RBAC
+    ├── branding.js       · nombre del sistema + descripción del hero
+    ├── config.js         · credenciales del proyecto Supabase
     ├── env-config.js     · DB_SCHEMA (generado por build.js)
-    ├── seed.js           · catálogo (1674 insumos en 0)
-    ├── db.js             · IndexedDB (stores: conteo + log + checkpoints + queue)
-    ├── sync.js           · sincronización Supabase (upsert + pull, outbox offline)
-    ├── auth.js           · sesión por CI + contraseña (RPC person_login, sin Supabase Auth)
+    ├── seed.js           · catálogo semilla — vacío a propósito
+    ├── db.js             · IndexedDB (conteo + log + checkpoints + queue)
+    ├── sync.js           · sincronización Supabase (cola offline + Realtime)
+    ├── auth.js            · sesión Supabase Auth (correo+contraseña, rol/área)
     ├── checkpoints.js    · respaldos locales del conteo
-    ├── store.js          · estado + conteos + bitácora + reset
-    ├── helpers.js        · categorías, iconos, utilidades
-    ├── components/toast.js
+    ├── store.js           · estado + conteos + bitácora + categorías
+    ├── helpers.js         · categorías dinámicas, formato, utilidades
+    ├── components/       · toast, modal genérico, confirm/prompt custom
     └── views/
-        ├── conteo.js      · conteo por categoría
-        ├── quickadd.js    · panel de agregado rápido
-        ├── registro.js    · bitácora (log) con corrección
-        ├── resumen.js     · progreso + exportar Excel
-        ├── admin.js       · login + panel de admin/coordinador (respaldos)
-        └── voluntarios.js · hub de gestión de usuarios de las 3 apps
+        ├── conteo.js         · Insumos
+        ├── ingresorapido.js  · Ingreso Rápido
+        ├── egresorapido.js   · Egreso Rápido
+        ├── registro.js       · Historial (bitácora)
+        ├── ingresos.js       · reporte de recepciones
+        ├── egresos.js        · reporte de entregas
+        ├── resumen.js        · hero + estadísticas
+        ├── comunicados.js    · avisos internos
+        ├── admin.js          · login + perfil + categorías + respaldos
+        ├── voluntarios.js    · gestión de usuarios (admin-only)
+        └── despachos.js      · oculto, código dormido
 ```
 
-## Gestión de usuarios (admin/coordinador/voluntario)
+Detalle completo en [documentation/](./documentation/README.md).
 
-Los usuarios viven en `person_credentials`, tabla **compartida** con
-AcopioUCV/UCVComandas — no hay Supabase Auth ni pantalla de auto-registro.
-Un `admin` ya existente crea/edita/elimina coordinadores y voluntarios desde
-la pestaña **Gestión de Usuarios** de la app (RPCs `create_user`/
-`update_user_role`/`delete_user`); un `coordinador` solo puede dar de alta
-voluntarios de su propia área, nunca otros coordinadores. El primer `admin`
-del sistema se crea directo contra la base (no hay flujo dentro de la app
-para eso). Detalle completo en
+## Gestión de usuarios
+
+Solo un `admin` da de alta/edita/revoca usuarios, desde la pestaña
+**Usuarios** (oculta del nav para cualquier otra cuenta). Alta y edición
+completa (nombre, apellido, cédula, teléfono, correo, área, contraseña) —
+detrás hay dos piezas: RPCs normales para los datos de la persona
+(`create_person`/`admin_update_person`) y una Edge Function
+(`supabase/functions/manage-users`) para lo que exige la Admin API de
+Supabase (crear/editar la cuenta de Auth en sí). Ver
 [documentation/05-autenticacion.md](./documentation/05-autenticacion.md).
 
 ## Base de datos
 
-Desde el 2026-07-19 esta app usa el **proyecto Supabase compartido** con
-AcopioUCV/UCVComandas (esquema `new_schema_archive`) — las credenciales ya
-están en `js/config.js`, no hace falta configurarlas a mano. Los scripts en
-`supabase/*.sql` son del proyecto externo **viejo** y ya no se ejecutan
-contra nada; se conservan como referencia histórica. El esquema real
-(`products`/`inventory`/`movements`/`movement_items`/`persons`/
-`person_credentials`, triggers, RLS/grants) está documentado en
-[documentation/08-base-de-datos-PENDIENTE.md](./documentation/08-base-de-datos-PENDIENTE.md).
+Proyecto Supabase **propio**, credenciales en `js/config.js`. Esquema
+canónico en
+[`supabase/new-project-schema.sql`](./supabase/new-project-schema.sql);
+migraciones incrementales fechadas en `supabase/YYYY-MM-DD-*.sql` para el
+proyecto ya vivo (pegar en el SQL Editor). Detalle completo (mapa de
+secciones, RLS, RPCs, Edge Function) en
+[documentation/08-base-de-datos-PENDIENTE.md](./documentation/08-base-de-datos-PENDIENTE.md)
+(nombre de archivo histórico, contenido al día).
 
 ## Desarrollo local
 
@@ -104,8 +131,8 @@ Al ser módulos ES, necesita servirse por HTTP (no `file://`):
 npx serve .      # o:  python -m http.server 8080
 ```
 
-## Regenerar el catálogo
+## Versionado
 
-El catálogo (`js/seed.js`) es un snapshot de los insumos activos de AcopioUCV.
-Si el catálogo del acopio cambia, se regenera consultando su tabla `items` y
-volcando cada insumo con `cantidad: 0` (ver README de acopio / scratch).
+`js/version.js` (`APP_VERSION`) es un contador simple de despliegues, no
+semver — se incrementa +0.01 en cada commit&push a `main` (ver
+`CLAUDE.md`), junto con `sw.js#CACHE`.
