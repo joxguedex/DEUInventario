@@ -27,6 +27,7 @@ import { toast } from '../components/toast.js';
 import { auth } from '../auth.js';
 import { store } from '../store.js';
 import { escHtml } from '../helpers.js';
+import { confirmDialog } from '../components/confirm.js';
 
 const PHONE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
 
@@ -241,7 +242,12 @@ export function renderVoluntarios(container) {
   };
 
   window.revokeVolunteer = async function (ci, label) {
-    if (!confirm(`¿Revocar el acceso de ${label}? Pierde la sesión de inmediato. La persona y su historial no se borran — se le puede otorgar acceso de nuevo más adelante.`)) return;
+    const ok = await confirmDialog({
+      title: 'Revocar acceso',
+      body: `¿Revocar el acceso de ${escHtml(label)}? Pierde la sesión de inmediato. La persona y su historial no se borran — se le puede otorgar acceso de nuevo más adelante.`,
+      confirmText: 'Revocar', danger: true,
+    });
+    if (!ok) return;
     try {
       await _edgeFn('revoke_access', { ci });
       toast.ok('Acceso revocado.');
@@ -257,7 +263,12 @@ export function renderVoluntarios(container) {
   // reconfigurar el área al reactivar.
   window.toggleActiveVolunteer = async function (ci, activarAhora, label) {
     const accion = activarAhora ? 'activar' : 'desactivar';
-    if (!confirm(`¿${activarAhora ? 'Activar' : 'Desactivar'} a ${label}?${activarAhora ? '' : ' Pierde la sesión de inmediato.'}`)) return;
+    const ok = await confirmDialog({
+      title: activarAhora ? 'Activar usuario' : 'Desactivar usuario',
+      body: `¿${activarAhora ? 'Activar' : 'Desactivar'} a ${escHtml(label)}?${activarAhora ? '' : ' Pierde la sesión de inmediato.'}`,
+      confirmText: activarAhora ? 'Activar' : 'Desactivar', danger: !activarAhora,
+    });
+    if (!ok) return;
     try {
       await _edgeFn('set_active', { ci, active: activarAhora });
       toast.ok(`Usuario ${activarAhora ? 'activado' : 'desactivado'}.`);

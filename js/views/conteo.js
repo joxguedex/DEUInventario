@@ -26,6 +26,7 @@ import { store } from '../store.js';
 import { auth } from '../auth.js';
 import { escHtml, normSearch, catLabel, iStatus, iPct } from '../helpers.js';
 import { toast } from '../components/toast.js';
+import { confirmDialog } from '../components/confirm.js';
 
 let _query = '';
 let _cat   = 'todos';
@@ -391,7 +392,12 @@ function _openEditItem(id) {
   });
 
   delBtn.addEventListener('click', async () => {
-    if (!confirm(`¿Seguro que deseas eliminar "${it.nombre}" del catálogo por completo? No se puede deshacer.`)) return;
+    const ok = await confirmDialog({
+      title: 'Eliminar insumo',
+      body: `¿Seguro que deseas eliminar "${escHtml(it.nombre)}" del catálogo por completo? No se puede deshacer.`,
+      confirmText: 'Eliminar', danger: true,
+    });
+    if (!ok) return;
     await store.deleteInsumo(it.id);
     _closeRen();
     renderList();
@@ -405,7 +411,12 @@ function _openEditItem(id) {
 
     // Fusión: reemplaza todo lo demás (el insumo actual desaparece del catálogo).
     if (target) {
-      if (!confirm(`¿Fusionar "${it.nombre}" con "${target.nombre}"? Se sumará el stock de "${it.nombre}" (${it.cantidad}) a "${target.nombre}" y "${it.nombre}" se eliminará del catálogo. No se puede deshacer.`)) return;
+      const ok = await confirmDialog({
+        title: 'Fusionar insumos',
+        body: `¿Fusionar "${escHtml(it.nombre)}" con "${escHtml(target.nombre)}"? Se sumará el stock de "${escHtml(it.nombre)}" (${it.cantidad}) a "${escHtml(target.nombre)}" y "${escHtml(it.nombre)}" se eliminará del catálogo. No se puede deshacer.`,
+        confirmText: 'Fusionar', danger: true,
+      });
+      if (!ok) return;
       await store.fusionarInsumo(it.id, target.id);
       _closeRen();
       renderList();

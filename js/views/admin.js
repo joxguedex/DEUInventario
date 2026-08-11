@@ -10,6 +10,7 @@ import { store }       from '../store.js';
 import { checkpoints } from '../checkpoints.js';
 import { escHtml }     from '../helpers.js';
 import { toast }       from '../components/toast.js';
+import { confirmDialog, promptDialog } from '../components/confirm.js';
 
 function _headers(extra = {}) {
   return auth.authHeaders({
@@ -347,7 +348,12 @@ function _paintCatList(ov) {
 
   box.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', async () => {
     const c = store.categories.find(x => String(x.id) === b.dataset.rename);
-    const nuevo = prompt('Nuevo nombre de la categoría:', c?.nombre || '');
+    const nuevo = await promptDialog({
+      title: 'Renombrar categoría',
+      label: 'Nuevo nombre',
+      value: c?.nombre || '',
+      confirmText: 'Renombrar',
+    });
     if (nuevo == null) return;
     const val = nuevo.trim();
     if (!val || val === c.nombre) return;
@@ -362,7 +368,12 @@ function _paintCatList(ov) {
 
   box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
     const c = store.categories.find(x => String(x.id) === b.dataset.del);
-    if (!confirm(`¿Eliminar la categoría "${c?.nombre}"? Si tiene insumos asignados, se rechazará — reasígnalos primero. Cualquier coordinador de esta categoría queda sin acceso al sistema de inmediato.`)) return;
+    const ok = await confirmDialog({
+      title: 'Eliminar categoría',
+      body: `¿Eliminar la categoría "${escHtml(c?.nombre)}"? Si tiene insumos asignados, se rechazará — reasígnalos primero. Cualquier coordinador de esta categoría queda sin acceso al sistema de inmediato.`,
+      confirmText: 'Eliminar', danger: true,
+    });
+    if (!ok) return;
     try {
       await store.deleteCategory(c.id);
       _paintCatList(ov);
@@ -390,14 +401,24 @@ function _paintCpList(ov) {
   }).join('');
 
   box.querySelectorAll('[data-restore]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('¿Restaurar este respaldo? Reemplaza el conteo actual.')) return;
+    const ok = await confirmDialog({
+      title: 'Restaurar respaldo',
+      body: '¿Restaurar este respaldo? Reemplaza el conteo actual.',
+      confirmText: 'Restaurar', danger: true,
+    });
+    if (!ok) return;
     await checkpoints.restore(b.dataset.restore);
     toast.ok('Respaldo restaurado.');
     _onDataChange?.();
     close();
   }));
   box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('¿Seguro que deseas borrar este respaldo?')) return;
+    const ok = await confirmDialog({
+      title: 'Borrar respaldo',
+      body: '¿Seguro que deseas borrar este respaldo?',
+      confirmText: 'Borrar', danger: true,
+    });
+    if (!ok) return;
     await checkpoints.remove(b.dataset.del);
     _paintCpList(ov);
   }));

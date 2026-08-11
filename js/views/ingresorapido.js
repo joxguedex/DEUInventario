@@ -15,6 +15,7 @@ import { auth } from '../auth.js';
 import { openPanel as openAdminPanel } from './admin.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
+import { confirmDialog } from '../components/confirm.js';
 
 const UNIDADES  = ['und','paquetes','cajas','bolsas','litros','kg','piezas'];
 
@@ -371,7 +372,12 @@ async function _importExcel(e) {
         return;
       }
 
-      if (!confirm(`Se importarán ${rows.length} insumos desde "${file.name}". Los que coincidan por ID o nombre+categoría se actualizan. ¿Continuar?`)) return;
+      const proceed = await confirmDialog({
+        title: 'Cargar inventario',
+        body: `Se importarán ${rows.length} insumos desde "${escHtml(file.name)}". Los que coincidan por ID o nombre+categoría se actualizan. ¿Continuar?`,
+        confirmText: 'Continuar',
+      });
+      if (!proceed) return;
 
       let ok = 0, err = 0;
       for (const row of rows) {

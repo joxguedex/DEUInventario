@@ -69,6 +69,10 @@ input[type=number]{-moz-appearance:textfield}
 /* ── Modal coordinador ── */
 .adm-ov{position:fixed;inset:0;z-index:100;background:rgba(17,24,39,.55);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px}
 .adm-ov.open{display:flex}
+/* Modal de confirmación (components/confirm.js) — puede dispararse desde
+   DENTRO de otro modal ya abierto (p.ej. "Eliminar" en Editar insumo);
+   siempre debe quedar por encima sin importar cuál se creó primero. */
+.confirm-ov{z-index:110}
 .adm-box{background:var(--surface);border-radius:var(--r-xl);box-shadow:var(--sh-lg);width:100%;max-width:380px;padding:20px 22px 22px;max-height:90vh;overflow-y:auto}
 .adm-box-lg{max-width:460px}
 .adm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:16px}
