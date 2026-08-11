@@ -26,13 +26,15 @@ function _catOptions() {
   return auth.isCoordinador() ? all.filter(c => String(c.id) === String(auth.area())) : all;
 }
 
-let _host = null;
+let _shell = null; // <aside id="ingresorapido"> — abre/cierra la hoja móvil (compartido con Egreso)
+let _host = null;  // <div id="qa-panel-ingreso"> — donde se pinta este panel
 let _onAdded = null;
 let _sel = null;   // insumo seleccionado
 let _new = null;   // { nombre } modo crear
 
-export function renderIngresoRapido(hostEl, opts = {}) {
-  _host = hostEl;
+export function renderIngresoRapido(shellEl, opts = {}) {
+  _shell = shellEl;
+  _host = shellEl.querySelector('#qa-panel-ingreso') || shellEl;
   _onAdded = opts.onAdded || null;
   // Si no hay nombre guardado manualmente, usar el nombre de la cuenta con sesión
   if (!store.contadorNombre && auth.name()) {
@@ -265,15 +267,15 @@ function _sugg(q, box) {
   box.querySelector('.qa-sugg-new').onclick = () => { _new = { nombre: q }; _paint(); };
 }
 
-// ── Hoja móvil ──
+// ── Hoja móvil (el shell es compartido: Ingreso y Egreso alternan adentro) ──
 export function openSheet() {
-  _host?.classList.add('open');
+  _shell?.classList.add('open');
   document.getElementById('qa-backdrop')?.classList.add('open');
   document.body.classList.add('qa-lock');
   setTimeout(() => _host?.querySelector('#qa-search')?.focus(), 260);
 }
 export function closeSheet() {
-  _host?.classList.remove('open');
+  _shell?.classList.remove('open');
   document.getElementById('qa-backdrop')?.classList.remove('open');
   document.body.classList.remove('qa-lock');
   _sel = null; _new = null; _paint();

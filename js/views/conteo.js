@@ -511,19 +511,46 @@ function _openRecat(id) {
 // ── "+ Nueva categoría" (admin-only) — atajo rápido sin salir de Insumos.
 // La gestión completa (renombrar/borrar) vive en el panel de administrador
 // (ver views/admin.js#_wireCategorias); acá solo se resuelve el caso más
-// común: falta una categoría para poder clasificar el próximo insumo.
-async function _openNewCategoria() {
+// común: falta una categoría para poder clasificar el próximo insumo. Usa el
+// mismo modal (_renModal/_closeRen) que Renombrar/Cambiar categoría, en vez
+// de un prompt() nativo del navegador.
+function _openNewCategoria() {
   if (!auth.isAdmin()) return;
-  const nombre = prompt('Nombre de la categoría nueva:');
-  if (nombre == null) return;
-  const val = nombre.trim();
-  if (!val) return;
-  try {
-    await store.createCategory(val);
-    toast.ok(`Categoría "${val}" creada.`);
-    renderTop();
-    renderList();
-  } catch (ex) {
-    toast.err(ex.message || 'No se pudo crear la categoría.');
-  }
+
+  const ov = _renModal(`
+    <div class="adm-box">
+      <div class="adm-head">
+        <div class="adm-title">Nueva categoría</div>
+        <button class="adm-x" data-close>&times;</button>
+      </div>
+      <div class="adm-field">
+        <label>Nombre</label>
+        <input id="newcat-input" type="text" autocomplete="off" placeholder="Ej. Alimentos" maxlength="100">
+      </div>
+      <div class="adm-err" id="newcat-err"></div>
+      <button class="adm-btn adm-btn-primary" id="newcat-save">Crear categoría</button>
+    </div>`);
+
+  const inp = ov.querySelector('#newcat-input');
+  const err = ov.querySelector('#newcat-err');
+  const saveBtn = ov.querySelector('#newcat-save');
+
+  const _submit = async () => {
+    err.textContent = '';
+    const val = inp.value.trim();
+    if (!val) { err.textContent = 'Escribe un nombre.'; return; }
+    try {
+      await store.createCategory(val);
+      _closeRen();
+      toast.ok(`Categoría "${val}" creada.`);
+      renderTop();
+      renderList();
+    } catch (ex) {
+      err.textContent = ex.message || 'No se pudo crear la categoría.';
+    }
+  };
+
+  saveBtn.addEventListener('click', _submit);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') _submit(); });
+  setTimeout(() => inp.focus(), 50);
 }

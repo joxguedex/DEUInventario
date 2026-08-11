@@ -113,11 +113,21 @@ input[type=number]{-moz-appearance:textfield}
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .content{flex:1;overflow-y:auto;padding:22px 26px 40px}
 
-/* ═══ PANEL DE AGREGADO RÁPIDO (desktop: columna izq. oscura) ═══ */
+/* ═══ PANEL DE INGRESO/EGRESO RÁPIDO (desktop: columna izq. oscura) ═══ */
+/* Mismo <aside> para los dos modos, alternados por .qa-switcher — ver
+   app.js#_setQaMode. #qa-panel-ingreso/#qa-panel-egreso son flex-column para
+   que .qa-head/.qa-body/.qa-foot se sigan repartiendo el alto disponible
+   igual que cuando .quickadd los contenía directamente. */
 .quickadd{display:flex;flex-direction:column;background:var(--sidebar);color:#fff}
+#qa-panel-ingreso,#qa-panel-egreso{display:flex;flex-direction:column;flex:1;min-height:0}
 @media(min-width:821px){
   .quickadd{width:300px;flex-shrink:0;overflow-y:auto;border-right:1px solid rgba(255,255,255,.05);padding:16px 15px}
 }
+.qa-switcher{display:flex;gap:6px;padding:3px;margin-bottom:14px;background:rgba(255,255,255,.06);border-radius:var(--r-sm);flex-shrink:0}
+.qa-switch-btn{flex:1;padding:9px 10px;border-radius:calc(var(--r-sm) - 3px);font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;text-align:center;color:rgba(255,255,255,.5);transition:background .15s,color .15s}
+.qa-switch-btn:hover{color:rgba(255,255,255,.8)}
+.qa-switch-btn.active{background:var(--amber);color:#1a1205}
+.qa-switch-btn[data-mode="egreso"].active{background:var(--red);color:#fff}
 .qa-head{display:flex;align-items:center;gap:11px;padding-bottom:13px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08)}
 .qa-head-icon{width:32px;height:32px;border-radius:9px;flex-shrink:0;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.28);display:flex;align-items:center;justify-content:center;color:var(--amber)}
 .qa-title{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:rgba(255,255,255,.92);line-height:1.2}
@@ -388,13 +398,7 @@ input[type=number]{-moz-appearance:textfield}
 .rsm-ing-detail-total{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--teal);text-align:right}
 .rsm-ing-detail-total span{display:block;font-family:'Inter',sans-serif;font-weight:400;font-size:10.5px;color:var(--t4);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
 
-/* ═══ EGRESO RÁPIDO (overlay full-screen, todos los viewports) ═══ */
-.eg-open-btn{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.35);color:#fca5a5}
-.eg-open-btn:hover{background:rgba(239,68,68,.24)}
-.eg-open-btn span{white-space:nowrap}
-
-.egresorapido{display:none;position:fixed;inset:0;z-index:70;background:var(--sidebar);color:#fff;flex-direction:column;overflow-y:auto;padding:calc(16px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom))}
-.egresorapido.open{display:flex}
+/* ═══ EGRESO RÁPIDO (dentro de #qa-panel-egreso, ver .quickadd arriba) ═══ */
 .eg-head{border-bottom:1px solid rgba(255,255,255,.08)}
 .eg-head-icon{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:#fca5a5}
 .eg-close{display:flex}
@@ -482,13 +486,8 @@ input[type=number]{-moz-appearance:textfield}
   /* FAB */
   .fab{display:flex;position:fixed;right:16px;bottom:calc(74px + env(safe-area-inset-bottom));z-index:35;width:56px;height:56px;border-radius:50%;background:var(--amber);color:#1a1205;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(245,158,11,.45)}
   .fab:active{transform:scale(.94)}
-  /* Egreso: segundo FAB, apilado arriba del de Ingreso, color distinto (rojo vs. ámbar) */
-  .fab-eg{bottom:calc(140px + env(safe-area-inset-bottom));width:48px;height:48px;background:var(--red);color:#fff;box-shadow:0 6px 20px rgba(239,68,68,.45)}
 
-  /* botón de topnav de Egreso no aplica en móvil (topnav es solo desktop) */
-  .eg-open-btn{display:none}
-
-  /* quick-add como hoja inferior */
+  /* quick-add como hoja inferior — un solo FAB abre la hoja; Ingreso/Egreso se alternan adentro con .qa-switcher */
   .quickadd{position:fixed;left:0;right:0;bottom:0;z-index:60;max-height:86vh;border-radius:var(--r-xl) var(--r-xl) 0 0;padding:16px 16px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -12px 40px rgba(0,0,0,.4);transform:translateY(105%);transition:transform .28s cubic-bezier(.4,0,.2,1);overflow-y:auto}
   .quickadd.open{transform:translateY(0)}
   .quickadd::before{content:'';position:absolute;top:8px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:4px;background:rgba(255,255,255,.2)}

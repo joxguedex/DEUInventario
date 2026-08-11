@@ -33,10 +33,10 @@
 <header class="topnav">
   <div class="tn-brand">GBS<span>Inventario</span> <span id="version-badge" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></div>
   <nav class="tn-nav">
+    <button class="tn-item" data-page="resumen">Resumen</button>
     <button class="tn-item active" data-page="conteo">Insumos</button>
     <button class="tn-item" data-page="registro">Bitácora</button>
     <button class="tn-item" data-page="ingresos">Ingresos</button>
-    <button class="tn-item" data-page="resumen">Resumen</button>
     <button class="tn-item" data-page="despachos">Despachos<span id="dsp-badge-desktop" style="display:none;margin-left:6px;min-width:16px;height:16px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span></button>
     <button class="tn-item" data-page="comunicados">Comunicados<span class="nav-badge" id="nb-comms" style="display:none">0</span></button>
     <button class="tn-item" data-page="voluntarios">Usuarios</button>
@@ -45,10 +45,6 @@
     <div class="sync-pill local" id="sync-pill" title="Sincronizar">
       <div class="sync-dot"></div><span id="sync-label">Solo local</span>
     </div>
-    <button class="auth-btn eg-open-btn" id="eg-open-btn" title="Egreso Rápido — genera una comanda de entrega">
-      <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      <span>Egreso Rápido</span>
-    </button>
     <button class="auth-btn" id="auth-btn">
       <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-width="2.5"/><path stroke-width="2.5" stroke-linecap="round" d="M7 11V7a5 5 0 0110 0v4"/></svg>
       <span id="auth-label">Coordinador</span>
@@ -84,8 +80,17 @@
 
 <div class="app">
 
-  <!-- ═══ Panel de Ingreso Rápido (izquierda / hoja móvil) ═══ -->
-  <aside class="quickadd" id="ingresorapido"></aside>
+  <!-- ═══ Panel de Ingreso/Egreso Rápido (izquierda / hoja móvil) ═══ -->
+  <!-- Un mismo panel alterna entre los dos modos (ver qa-switcher); por
+       defecto siempre se muestra Ingreso Rápido primero. -->
+  <aside class="quickadd" id="ingresorapido">
+    <div class="qa-switcher" id="qa-switcher">
+      <button class="qa-switch-btn active" data-mode="ingreso" id="qa-switch-ingreso">Ingreso Rápido</button>
+      <button class="qa-switch-btn" data-mode="egreso" id="qa-switch-egreso">Egreso Rápido</button>
+    </div>
+    <div id="qa-panel-ingreso"></div>
+    <div id="qa-panel-egreso" style="display:none"></div>
+  </aside>
 
   <!-- ═══ Contenido ═══ -->
   <main class="main">
@@ -122,18 +127,16 @@
   </main>
 </div>
 
-<!-- ═══ Egreso Rápido: overlay de pantalla completa (todos los viewports) ═══ -->
-<aside class="egresorapido" id="egresorapido"></aside>
-
 <!-- ═══ Móvil: backdrop + FAB + bottom nav ═══ -->
 <div class="qa-backdrop" id="qa-backdrop"></div>
 <button class="fab" id="fab-qa" aria-label="Ingreso rápido">
   <svg width="26" height="26" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
 </button>
-<button class="fab fab-eg" id="fab-eg" aria-label="Egreso rápido">
-  <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-</button>
 <nav class="m-bottomnav">
+  <button class="mbn-item" data-page="resumen">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    <span>Resumen</span>
+  </button>
   <button class="mbn-item active" data-page="conteo">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
     <span>Insumos</span>
@@ -145,10 +148,6 @@
   <button class="mbn-item" data-page="ingresos">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
     <span>Ingresos</span>
-  </button>
-  <button class="mbn-item" data-page="resumen">
-    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-    <span>Resumen</span>
   </button>
   <button class="mbn-item" data-page="despachos">
     <span style="position:relative;display:inline-block;">

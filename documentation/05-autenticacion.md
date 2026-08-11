@@ -99,12 +99,14 @@ insumos/conteo:
   la fila sin el botón ⋮ ni el panel −/cantidad/+/eliminar — solo
   nombre/stock/check, de solo lectura. `_patchItem()` tolera la ausencia de
   `.cnt-qty` en esas filas (repintado en vivo tras un pull).
-- **`app.js#applyRBAC()`**: oculta por completo el panel de Ingreso Rápido
-  (`#ingresorapido`) y su FAB móvil (`#fab-qa`) — a diferencia de Conteo, acá
-  no tiene sentido dejarlo "de solo lectura", así que se esconde entero.
-  Egreso Rápido (`#egresorapido`/`#fab-eg`/`#eg-open-btn`) NO se oculta:
-  genera una comanda real de salida, no es "editar mi propio inventario", y
-  General puede despachar cualquier área.
+- **`app.js#applyRBAC()`**: Ingreso y Egreso Rápido comparten un mismo panel
+  (`#ingresorapido`, alternado por `.qa-switcher` — ver
+  [04-vistas-ui.md](./04-vistas-ui.md)); para General se oculta solo la
+  pestaña "Ingreso Rápido" del switcher (`#qa-switch-ingreso`) y se fuerza el
+  modo a `'egreso'` (`_setQaMode('egreso')`) — a diferencia de Conteo, acá no
+  tiene sentido dejar Ingreso "de solo lectura", así que se esconde entero.
+  Egreso Rápido NO se oculta: genera una comanda real de salida, no es
+  "editar mi propio inventario", y General puede despachar cualquier área.
 - **`views/registro.js`**: el botón de borrar/corregir un registro
   (`.reg-del`, revierte el delta sobre el insumo) solo se pinta con
   `auth.canEditInventory()`.

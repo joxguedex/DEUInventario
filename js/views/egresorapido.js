@@ -1,5 +1,10 @@
 // ── Panel de Egreso Rápido ─────────────────────────────────
-// Overlay de pantalla completa (todos los viewports, no solo móvil).
+// Comparte ubicación con Ingreso Rápido: ambos viven dentro de <aside
+// id="ingresorapido">, alternados por un switcher (ver app.js#_setQaMode) que
+// muestra/oculta #qa-panel-ingreso / #qa-panel-egreso. Este módulo solo pinta
+// dentro de su <div id="qa-panel-egreso">: abrir/cerrar la hoja móvil entera
+// lo maneja ingresorapido.js (el "shell" compartido), no este archivo.
+//
 // Busca un solicitante + arma un carrito de ítems y, al confirmar, genera
 // una comanda real (equivalente a la "Entrega Rápida" de UCVComandas,
 // origen='rapida') vía la RPC create_comanda_rapida — no un simple
@@ -23,6 +28,7 @@ import { toast } from '../components/toast.js';
 
 let _host = null;
 let _onSubmitted = null;
+let _onClose = null;                  // notifica al switcher (app.js) para volver a modo Ingreso
 let _solicitante = null;              // { ci, name, surname }
 let _rows = [{ item: null, cantidad: null }];
 let _submitting = false;
@@ -53,10 +59,12 @@ function _headers(extra = {}) {
 // completo) en cada disparo borraba lo que el usuario tenía a medio
 // escribir (el form de "Nueva persona", el buscador, la cantidad de una
 // fila). Por eso acá NUNCA se llama _paint(): solo se actualiza el
-// indicador de conexión de forma puntual, y solo si de verdad cambió.
+// indicador de conexión de forma puntual, y solo si de verdad cambió. El
+// panel puede seguir montado (oculto por el switcher) sin estar activo, así
+// que igual se guarda el chequeo de "cambió de verdad" — solo se quitó el
+// gate de "¿está open?" porque ya no hay una clase .open que lo indique acá.
 let _lastOnlineSeen = null;
 sync.onChange(() => {
-  if (!_host?.classList.contains('open')) return;
   if (_lastOnlineSeen === sync.online) return;
   _lastOnlineSeen = sync.online;
   _refreshOnlineIndicator();
@@ -71,6 +79,7 @@ function _refreshOnlineIndicator() {
 export function renderEgresoRapido(hostEl, opts = {}) {
   _host = hostEl;
   _onSubmitted = opts.onSubmitted || null;
+  _onClose = opts.onClose || null;
   _paint();
 }
 
@@ -83,20 +92,22 @@ function _resetState() {
   _addingPersona = false;
 }
 
+// Activa el modo Egreso — llamado por el switcher (app.js) al cambiar de
+// pestaña dentro del panel compartido. Ya no abre un overlay propio (eso lo
+// resuelve el switcher mostrando/ocultando #qa-panel-egreso).
 export async function openEgreso() {
-  _host?.classList.add('open');
-  document.body.classList.add('qa-lock');
   _lastOnlineSeen = sync.online;
   if (!_ubicacionNombre) _fetchUbicacionGenerica();
   _paint();
   setTimeout(() => _host?.querySelector('#eg-sol-search')?.focus(), 200);
 }
 
+// Reinicia el formulario de Egreso y avisa al switcher para volver a modo
+// Ingreso — se llama tanto desde el botón "✕" como tras un envío exitoso.
 export function closeEgreso() {
-  _host?.classList.remove('open');
-  document.body.classList.remove('qa-lock');
   _resetState();
   _paint();
+  _onClose?.();
 }
 
 // Puramente cosmético (mostrar "Entregando desde: X"): la RPC

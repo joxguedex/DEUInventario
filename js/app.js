@@ -12,7 +12,7 @@ import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
 import { renderDespachos, initDespachosWatcher } from './views/despachos.js';
 import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
-import { renderEgresoRapido, openEgreso, closeEgreso } from './views/egresorapido.js';
+import { renderEgresoRapido, openEgreso } from './views/egresorapido.js';
 import { initAdmin, renderLoginWall } from './views/admin.js';
 import { initComunicados, refreshComunicados } from './views/comunicados.js';
 import { modal } from './components/modal.js';
@@ -35,6 +35,23 @@ const TITLES = {
 };
 
 let _current = 'conteo';
+
+// ── Switcher Ingreso/Egreso Rápido (mismo panel, ver #qa-switcher en
+// index.html) — Egreso ya no tiene su propio botón/overlay; alterna dentro
+// de <aside id="ingresorapido"> mostrando/ocultando #qa-panel-ingreso vs.
+// #qa-panel-egreso. Por defecto siempre arranca en 'ingreso'.
+let _qaMode = 'ingreso';
+function _setQaMode(mode) {
+  if (mode === 'ingreso' && !auth.canEditInventory()) return; // "General": solo Egreso, defensivo (ver applyRBAC)
+  if (_qaMode === mode) return;
+  _qaMode = mode;
+  const pIngreso = document.getElementById('qa-panel-ingreso');
+  const pEgreso  = document.getElementById('qa-panel-egreso');
+  if (pIngreso) pIngreso.style.display = mode === 'ingreso' ? '' : 'none';
+  if (pEgreso)  pEgreso.style.display  = mode === 'egreso'  ? '' : 'none';
+  document.querySelectorAll('.qa-switch-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  if (mode === 'egreso') openEgreso();
+}
 
 async function nav(page) {
   _current = page;
@@ -65,16 +82,19 @@ function applyRBAC() {
   if (authBtnM) authBtnM.style.display = '';
 
   // El coordinador del área "General" solo consulta el inventario (nunca lo
-  // modifica, ver auth.js#canEditInventory()): Ingreso Rápido es exclusivo
-  // para sumar/crear insumos, así que se oculta entero (panel + FAB móvil)
-  // — a diferencia de Egreso Rápido, que sí conserva porque "entregar" no es
-  // "modificar el inventario propio" (genera una comanda real, y General
-  // puede despachar de cualquier área).
+  // modifica, ver auth.js#canEditInventory()): la pestaña "Ingreso Rápido"
+  // del switcher se oculta entera — a diferencia de Egreso Rápido, que sí
+  // conserva porque "entregar" no es "modificar el inventario propio" (genera
+  // una comanda real, y General puede despachar de cualquier área). El panel
+  // en sí (y el FAB móvil que lo abre) ya NO se ocultan por completo: ambos
+  // modos comparten el mismo <aside>, así que ocultarlo entero le quitaría
+  // también Egreso Rápido a General.
   const canEdit = auth.canEditInventory();
-  const ingresoPanel = document.getElementById('ingresorapido');
-  const fabQa = document.getElementById('fab-qa');
-  if (ingresoPanel) ingresoPanel.style.display = canEdit ? '' : 'none';
-  if (fabQa) fabQa.style.display = canEdit ? '' : 'none';
+  const switchIngreso = document.getElementById('qa-switch-ingreso');
+  const switcher = document.getElementById('qa-switcher');
+  if (switchIngreso) switchIngreso.style.display = canEdit ? '' : 'none';
+  if (switcher) switcher.style.display = canEdit ? '' : 'none'; // un solo modo posible: no hace falta alternar
+  if (!canEdit) _setQaMode('egreso'); // fuerza salida de Ingreso si ya estaba ahí (p.ej. reasignación de área en vivo)
 }
 
 // Última cédula para la que ya se sincronizó el nombre del "contador" (pie
@@ -135,7 +155,7 @@ export function checkAuth() {
     // sesión (RLS exige `to authenticated`, ver supabase/new-project-
     // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
     // hay un access_token real.
-    if (freshLogin) { nav('conteo'); store.loadCategories(); }
+    if (freshLogin) { nav('conteo'); store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
     applyRBAC();
     // Recalcula qué insumos puede ver esta cuenta (coordinador ↔ su área,
     // ver store.visibleItems()) sin esperar a que el usuario cambie de
@@ -252,18 +272,25 @@ async function boot() {
   modal.init();
   initComunicados();
 
-  // Panel de Ingreso Rápido (persistente / global)
+  // Panel de Ingreso/Egreso Rápido (persistente / global) — mismo <aside>,
+  // dos paneles internos alternados por el switcher (ver _setQaMode).
   renderIngresoRapido(document.getElementById('ingresorapido'), { onAdded });
-  // Panel de Egreso Rápido (overlay bajo demanda, todos los viewports)
-  renderEgresoRapido(document.getElementById('egresorapido'), { onSubmitted: onEgresado });
+  renderEgresoRapido(document.getElementById('qa-panel-egreso'), {
+    onSubmitted: onEgresado,
+    onClose: () => _setQaMode('ingreso'),
+  });
 
-  // FAB + backdrop (móvil) — Ingreso
-  document.getElementById('fab-qa')?.addEventListener('click', openSheet);
+  // Switcher Ingreso ↔ Egreso
+  document.querySelectorAll('.qa-switch-btn').forEach(b =>
+    b.addEventListener('click', () => _setQaMode(b.dataset.mode)));
+
+  // FAB + backdrop (móvil) — siempre entra mostrando primero el modo que le
+  // corresponda por defecto (Ingreso si puede editar, si no Egreso).
+  document.getElementById('fab-qa')?.addEventListener('click', () => {
+    _setQaMode(auth.canEditInventory() ? 'ingreso' : 'egreso');
+    openSheet();
+  });
   document.getElementById('qa-backdrop')?.addEventListener('click', closeSheet);
-
-  // FAB (móvil) + botón de topnav (desktop) — Egreso
-  document.getElementById('fab-eg')?.addEventListener('click', openEgreso);
-  document.getElementById('eg-open-btn')?.addEventListener('click', openEgreso);
 
   sync.onChange(async () => {
     if (sync._authFailed) {
