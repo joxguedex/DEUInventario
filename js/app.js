@@ -7,13 +7,13 @@ import { db }    from './db.js';
 import { checkpoints } from './checkpoints.js';
 import { renderConteo, renderTop, renderList, refreshItem, syncView } from './views/conteo.js';
 import { renderRegistro } from './views/registro.js';
+import { renderIngresos, refreshIngresos } from './views/ingresos.js';
 import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
 import { renderDespachos, initDespachosWatcher } from './views/despachos.js';
 import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
 import { renderEgresoRapido, openEgreso, closeEgreso } from './views/egresorapido.js';
 import { initAdmin, renderLoginWall } from './views/admin.js';
-import { initRevision, abrirRevision } from './views/revision.js';
 import { initComunicados, refreshComunicados } from './views/comunicados.js';
 import { modal } from './components/modal.js';
 import { toast } from './components/toast.js';
@@ -22,13 +22,14 @@ import { APP_VERSION } from './version.js';
 const pages = {
   conteo:   document.getElementById('page-conteo'),
   registro: document.getElementById('page-registro'),
+  ingresos: document.getElementById('page-ingresos'),
   resumen:  document.getElementById('page-resumen'),
   despachos: document.getElementById('page-despachos'),
   comunicados: document.getElementById('page-comunicados'),
   voluntarios: document.getElementById('page-voluntarios'),
 };
 const TITLES = {
-  conteo: 'Conteo Físico', registro: 'Bitácora', resumen: 'Resumen del Inventario',
+  conteo: 'Insumos', registro: 'Bitácora', ingresos: 'Ingresos', resumen: 'Resumen',
   despachos: 'Despachos Pendientes', comunicados: 'Comunicados y Necesidades',
   voluntarios: 'Gestión de Accesos',
 };
@@ -44,6 +45,7 @@ async function nav(page) {
 
   if (page === 'conteo')   renderConteo(pages.conteo);
   if (page === 'registro') await renderRegistro(pages.registro);
+  if (page === 'ingresos') renderIngresos(pages.ingresos);
   if (page === 'resumen')  renderResumen(pages.resumen);
   if (page === 'despachos') renderDespachos(pages.despachos);
   if (page === 'comunicados') refreshComunicados();
@@ -149,6 +151,7 @@ async function onAdded(id, isNew) {
   updateSyncPill();
   if (_current === 'conteo') { if (isNew) { renderTop(); renderList(); } else refreshItem(id); }
   else if (_current === 'registro') await renderRegistro(pages.registro);
+  else if (_current === 'ingresos') await refreshIngresos();
   else if (_current === 'resumen')  renderResumen(pages.resumen);
   // en móvil, cerrar la hoja tras agregar para volver a ver la lista
   if (window.matchMedia('(max-width:820px)').matches) closeSheet();
@@ -254,19 +257,6 @@ async function boot() {
   // Panel de Egreso Rápido (overlay bajo demanda, todos los viewports)
   renderEgresoRapido(document.getElementById('egresorapido'), { onSubmitted: onEgresado });
 
-  // "Subir mi conteo": compara este teléfono con la nube y sube solo mis
-  // diferencias, sin tocar lo que otros contaron en otros insumos.
-  initRevision({ onDataChange: null, onDone: async () => {
-    store.items = await db.getAll();
-    store.logs  = await db.logGetAll();
-    updateSyncPill();
-    if (_current === 'conteo')   { renderTop(); renderList(); }
-    if (_current === 'registro') await renderRegistro(pages.registro);
-    if (_current === 'resumen')  renderResumen(pages.resumen);
-  }});
-  document.getElementById('push-btn')?.addEventListener('click', abrirRevision);
-  document.getElementById('push-btn-m')?.addEventListener('click', abrirRevision);
-
   // FAB + backdrop (móvil) — Ingreso
   document.getElementById('fab-qa')?.addEventListener('click', openSheet);
   document.getElementById('qa-backdrop')?.addEventListener('click', closeSheet);
@@ -288,8 +278,9 @@ async function boot() {
     store.items = await db.getAll();
     store.logs  = await db.logGetAll();
 
-    if (_current === 'conteo')  syncView();
-    if (_current === 'resumen') renderResumen(pages.resumen);
+    if (_current === 'conteo')   syncView();
+    if (_current === 'ingresos') refreshIngresos();
+    if (_current === 'resumen')  renderResumen(pages.resumen);
   });
   updateSyncPill();
   

@@ -46,12 +46,6 @@ export function renderAuthButton() {
   document.getElementById('auth-btn-m')?.classList.toggle('on', isLogged);
 }
 
-// Acción sensible: en la práctica siempre true acá (solo admin/coordinador
-// con acceso llegan al app-shell), se mantiene como chequeo defensivo.
-export function requireCoord() {
-  return auth.isLoggedIn();
-}
-
 // Usado por ingresorapido.js para mostrar "Eliminar insumo" solo a admin.
 export function isAdmin() {
   return auth.isAdmin();
@@ -121,7 +115,10 @@ export function renderLoginWall(container) {
 }
 
 // ── Panel de usuario (admin y coordinador) ──
-async function openPanel() {
+// Exportado también como acceso directo a "Máquina del Tiempo" desde el
+// panel de Ingreso Rápido (ver ingresorapido.js) — mismo panel completo que
+// abre el botón de cuenta, sin duplicar la sección de respaldos.
+export async function openPanel() {
   if (!auth.isLoggedIn()) return; // sin sesión, el botón no abre nada (el muro ya se muestra)
 
   if (auth.isAdmin()) await checkpoints.load();

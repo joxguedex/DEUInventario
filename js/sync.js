@@ -250,7 +250,7 @@ export const sync = {
         const p = op.payload;
         const delta = p.deleted_at ? -p.cantidad : p.cantidad;
         endpoint = 'apply_count';
-        body = { p_client_op_id: op.id, p_product_client_id: p.item_id, p_delta: delta };
+        body = { p_client_op_id: op.id, p_product_client_id: p.item_id, p_delta: delta, p_origen: p.origen || 'conteo' };
       } else if (op.table === 'uncount') {
         endpoint = 'uncount_item';
         body = { p_product_client_id: op.payload.item_id };

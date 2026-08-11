@@ -1,12 +1,14 @@
-// ── Vista de Conteo Físico ────────────────────────────────
-// Catálogo completo agrupado por categoría (todo arranca en 0).
-// El ingreso/egreso rápido viven en sus propios paneles (ingresorapido.js/egresorapido.js).
+// ── Vista de Insumos (antes "Conteo Físico") ──────────────
+// Catálogo completo agrupado por categoría. El ingreso/egreso rápido viven
+// en sus propios paneles (ingresorapido.js/egresorapido.js) — acá se ajusta
+// cantidad puntual a puntual (herramientas de conteo convencionales,
+// quedan marcadas como "Conteo" en la Bitácora, ver store.js#registrar).
 //
 // Cada insumo es un .cnt-item (data-id) que envuelve la línea visible
 // (.cnt-row: check + nombre + stock + botón ⋮) y un panel colapsable
-// (.cnt-row-menu: −/cantidad/+, "Renombrar" y "Eliminar insumo") que se abre
-// con el ⋮ — decisión de IHC para no saturar la lista con controles siempre
-// visibles.
+// (.cnt-row-menu: −/cantidad/+, "Renombrar", "Cambiar categoría" y
+// "Eliminar insumo") que se abre con el ⋮ — decisión de IHC para no saturar
+// la lista con controles siempre visibles.
 // "Eliminar insumo" borra el insumo por completo del catálogo (soft delete,
 // store.deleteInsumo); solo pide confirmación, no contraseña.
 // "Renombrar" abre un buscador (_openRename): si se elige un insumo ya
@@ -14,6 +16,10 @@
 // actual, store.fusionarInsumo); si no se elige ninguno, solo se cambia el
 // nombre (store.renombrarInsumo). Pensado para limpiar duplicados/typos del
 // catálogo sin perder el stock ya contado.
+// "+ Nueva categoría" (admin-only) delega en store.createCategory — sin
+// categorías creadas no hay dónde clasificar un insumo nuevo, así que
+// Ingreso Rápido bloquea la creación hasta que exista al menos una (ver
+// ingresorapido.js).
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
@@ -27,7 +33,6 @@ function _catOrder() {
   return [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => String(c.id));
 }
 
-let _filter   = 'todos';
 let _query    = '';
 let _expanded = new Set();
 let _root     = null;
@@ -44,14 +49,10 @@ export function renderConteo(rootEl) {
           <input id="cnt-q" placeholder="Filtrar la lista…" autocomplete="off">
           <button id="cnt-q-clear" class="cnt-q-clear" style="display:none">&times;</button>
         </div>
-        <div class="cnt-filters">
-          <button class="cnt-fbtn active" data-f="todos">Todos</button>
-          <button class="cnt-fbtn" data-f="pendientes">Pendientes</button>
-          <button class="cnt-fbtn" data-f="contados">Contados</button>
-        </div>
+        ${auth.isAdmin() ? `<button class="adm-mini" id="cnt-new-cat">+ Nueva categoría</button>` : ''}
       </div>
       <div class="cnt-hint">${auth.canEditInventory()
-        ? 'Toca una categoría para ver y contar sus insumos · o usa el <strong>Agregado rápido</strong> para sumar al instante.'
+        ? 'Toca una categoría para ver sus insumos y ajustar cantidades · o usa el <strong>Ingreso Rápido</strong> para sumar al instante.'
         : 'Toca una categoría para consultar sus insumos (solo lectura — tu cuenta no puede modificar el inventario).'}</div>
       <div class="cnt-list" id="cnt-list"></div>
     </div>`;
@@ -64,18 +65,13 @@ export function renderTop() {
   const el = _root?.querySelector('#cnt-topcard');
   if (!el) return;
   const s = store.stats();
-  const pct = s.total ? Math.round(s.contados / s.total * 100) : 0;
+  const criticos = store.visibleItems().filter(i => !i.deleted_at && i.umbral > 0 && i.cantidad < i.umbral).length;
   el.innerHTML = `
-    <div class="ctc-progress">
-      <div class="ctc-progress-head">
-        <span class="ctc-progress-title">Progreso del conteo</span>
-        <span class="ctc-progress-pct">${pct}%</span>
-      </div>
-      <div class="ctc-bar"><div class="ctc-bar-fill" style="width:${pct}%"></div></div>
-      <div class="ctc-progress-sub">
-        <strong>${s.contados.toLocaleString('es-VE')}</strong> de ${s.total.toLocaleString('es-VE')} insumos ·
-        <strong>${s.unidades.toLocaleString('es-VE')}</strong> unidades
-      </div>
+    <div class="stats-cards">
+      <div class="stat-card stat-card-total"><div class="stat-card-num">${s.total.toLocaleString('es-VE')}</div><div class="stat-card-lbl">insumos</div></div>
+      <div class="stat-card"><div class="stat-card-num">${store.categories.length.toLocaleString('es-VE')}</div><div class="stat-card-lbl">categorías</div></div>
+      <div class="stat-card ${criticos ? 'stat-card-crit' : 'stat-card-ok'}"><div class="stat-card-num">${criticos.toLocaleString('es-VE')}</div><div class="stat-card-lbl">bajo umbral</div></div>
+      <div class="stat-card stat-card-ok"><div class="stat-card-num">${s.unidades.toLocaleString('es-VE')}</div><div class="stat-card-lbl">unidades</div></div>
     </div>`;
 }
 
@@ -89,19 +85,10 @@ function _wireControls() {
     t = setTimeout(() => { _query = q.value.trim(); renderList(); }, 150);
   });
   clr.addEventListener('click', () => { q.value=''; _query=''; clr.style.display='none'; renderList(); q.focus(); });
-  _root.querySelectorAll('.cnt-fbtn').forEach(b => {
-    b.addEventListener('click', () => {
-      _root.querySelectorAll('.cnt-fbtn').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      _filter = b.dataset.f;
-      renderList();
-    });
-  });
+  _root.querySelector('#cnt-new-cat')?.addEventListener('click', _openNewCategoria);
 }
 
 function _matches(item) {
-  if (_filter === 'pendientes' && item.contado) return false;
-  if (_filter === 'contados'   && !item.contado) return false;
   if (_query && !normSearch(item.nombre).includes(normSearch(_query))) return false;
   return true;
 }
@@ -123,9 +110,9 @@ export function renderList() {
   if (!cats.length) { list.innerHTML = `<div class="cnt-empty">Sin resultados.</div>`; return; }
 
   // Abrir la primera categoría por defecto (una vez), para que se vean los insumos de entrada.
-  if (!_seeded && !_query && _filter === 'todos') { _expanded.add(cats[0]); _seeded = true; }
+  if (!_seeded && !_query) { _expanded.add(cats[0]); _seeded = true; }
 
-  const forceOpen = !!_query || _filter !== 'todos';
+  const forceOpen = !!_query;
   let html = '';
   for (const c of cats) {
     const items = groups[c].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
@@ -519,4 +506,24 @@ function _openRecat(id) {
       err.textContent = ex.message || 'No se pudo cambiar la categoría.';
     }
   });
+}
+
+// ── "+ Nueva categoría" (admin-only) — atajo rápido sin salir de Insumos.
+// La gestión completa (renombrar/borrar) vive en el panel de administrador
+// (ver views/admin.js#_wireCategorias); acá solo se resuelve el caso más
+// común: falta una categoría para poder clasificar el próximo insumo.
+async function _openNewCategoria() {
+  if (!auth.isAdmin()) return;
+  const nombre = prompt('Nombre de la categoría nueva:');
+  if (nombre == null) return;
+  const val = nombre.trim();
+  if (!val) return;
+  try {
+    await store.createCategory(val);
+    toast.ok(`Categoría "${val}" creada.`);
+    renderTop();
+    renderList();
+  } catch (ex) {
+    toast.err(ex.message || 'No se pudo crear la categoría.');
+  }
 }

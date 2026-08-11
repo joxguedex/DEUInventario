@@ -9,7 +9,10 @@
 // decremento de conteo suelto sin trazabilidad de negocio.
 
 import { store } from '../store.js';
+import { sync } from '../sync.js';
+import { db } from '../db.js';
 import { auth } from '../auth.js';
+import { openPanel as openAdminPanel } from './admin.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
 
@@ -71,6 +74,17 @@ function _foot() {
         <span class="qa-foot-name">${escHtml(nombre || 'Sin nombre')}</span>
         ${isFromAuth ? '<span class="qa-foot-badge">cuenta</span>' : ''}
       </div>
+      ${auth.isAdmin() ? `
+      <div class="qa-admin-tools">
+        <button class="qa-tool-btn" id="qa-export-json">↓ Exportar datos (JSON)</button>
+        <button class="qa-tool-btn qa-tool-blue" id="qa-refresh-local">↺ Actualizar datos locales</button>
+        <button class="qa-tool-btn qa-tool-green" id="qa-export-excel">↓ Exportar inventario (Excel)</button>
+        <label class="qa-tool-btn qa-tool-purple" id="qa-import-excel-lbl" style="margin:0">
+          ↑ Cargar inventario (Excel)
+          <input type="file" id="qa-import-excel" accept=".xlsx,.xls,.csv" style="display:none">
+        </label>
+        <button class="qa-tool-btn qa-tool-blue" id="qa-time-machine">🕒 Máquina del Tiempo</button>
+      </div>` : ''}
     </div>`;
 }
 
@@ -109,12 +123,25 @@ function _body() {
       </div>`;
   }
   if (_new) {
+    const opciones = _catOptions();
+    // Sin categorías (propias o en general) no hay dónde clasificar un
+    // insumo nuevo — bloquear la creación en vez de dejar el <select> vacío
+    // (ver views/conteo.js#_openNewCategoria para crear la primera).
+    if (!opciones.length) {
+      return `
+      <div class="qa-new">
+        <div class="qa-hint">${auth.isAdmin()
+          ? 'Todavía no hay ninguna categoría creada — crea la primera desde Insumos ("+ Nueva categoría") antes de agregar insumos.'
+          : 'Todavía no hay ninguna categoría creada. Pide a un administrador que cree al menos una antes de agregar insumos.'}</div>
+        <button class="qa-link" id="qa-back">← volver</button>
+      </div>`;
+    }
     return `
       <div class="qa-new">
         <input class="qa-new-name" id="qa-new-name" placeholder="Nombre del insumo…" maxlength="80" value="${escHtml(_new.nombre || '')}">
         <div class="qa-new-row">
           <select class="qa-new-sel" id="qa-new-cat" ${auth.isCoordinador() ? 'disabled' : ''}>
-            ${_catOptions().map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
+            ${opciones.map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
           </select>
           <select class="qa-new-sel" id="qa-new-unit">
             ${UNIDADES.map(u => `<option value="${u}">${u}</option>`).join('')}
@@ -138,6 +165,7 @@ function _body() {
 function _wire() {
   _host.querySelector('#qa-close-m')?.addEventListener('click', () => closeSheet());
   _host.querySelector('#qa-back')?.addEventListener('click', () => { _sel = null; _new = null; _paint(); _host.querySelector('#qa-search')?.focus(); });
+  if (auth.isAdmin()) _wireAdminTools();
 
   if (_sel) {
     const deltaInp  = _host.querySelector('#qa-delta');
@@ -154,7 +182,7 @@ function _wire() {
     const _apply = async () => {
       const n = parseInt(deltaInp.value, 10);
       if (!n || n <= 0) { deltaInp.focus(); deltaInp.classList.add('qa-shake'); setTimeout(() => deltaInp.classList.remove('qa-shake'), 400); return; }
-      const it = await store.registrar(_sel.id, n);
+      const it = await store.registrar(_sel.id, n, { origen: 'ingreso' });
       toast.ok(`+${n} ${it.nombre} · total ${it.cantidad}`);
       _onAdded?.(it.id, false);
       // Actualiza el total en pantalla y limpia el input (no cierra el panel)
@@ -176,7 +204,9 @@ function _wire() {
   if (_new) {
     const name = _host.querySelector('#qa-new-name');
     name?.focus();
-    _host.querySelector('#qa-new-ok').onclick = async () => {
+    const okBtn = _host.querySelector('#qa-new-ok');
+    if (!okBtn) return; // sin categorías: solo el botón "← volver" existe, ver _body()
+    okBtn.onclick = async () => {
       const nombre = name.value.trim();
       if (!nombre) { name.focus(); return; }
       const it = await store.addNuevo({
@@ -247,4 +277,107 @@ export function closeSheet() {
   document.getElementById('qa-backdrop')?.classList.remove('open');
   document.body.classList.remove('qa-lock');
   _sel = null; _new = null; _paint();
+}
+
+// ── Herramientas admin (portadas de UCVAcopio/index.html) ──────────────
+function _wireAdminTools() {
+  _host.querySelector('#qa-export-json')?.addEventListener('click', _exportJSON);
+  _host.querySelector('#qa-refresh-local')?.addEventListener('click', _refreshLocal);
+  _host.querySelector('#qa-export-excel')?.addEventListener('click', _exportExcel);
+  _host.querySelector('#qa-import-excel')?.addEventListener('change', _importExcel);
+  _host.querySelector('#qa-time-machine')?.addEventListener('click', openAdminPanel);
+}
+
+async function _exportJSON() {
+  const items = await db.getAll();
+  const payload = { version: 'gbsinventario_v1', exportedAt: new Date().toISOString(), items };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `gbsinventario-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click(); URL.revokeObjectURL(url);
+  toast.ok('Datos exportados.');
+}
+
+// Fuerza un pull completo desde el servidor (olvida el checkpoint incremental,
+// ver sync.js#pullAll) — el refresco de la vista activa lo hace solo el
+// sync.onChange ya suscrito en app.js, no hace falta repetirlo acá.
+async function _refreshLocal() {
+  if (!sync.enabled) { toast.info('Nube no configurada.'); return; }
+  toast.info('Actualizando datos locales…');
+  try {
+    await sync.pullAll();
+    toast.ok('Datos locales actualizados.');
+  } catch {
+    toast.err('No se pudo actualizar — revisa la conexión.');
+  }
+}
+
+function _exportExcel() {
+  if (typeof XLSX === 'undefined') { toast.err('Librería Excel no cargada.'); return; }
+  const items = store.visibleItems().filter(i => !i.deleted_at).map(i => ({
+    ID: i.id, Nombre: i.nombre, Categoría: catLabel(i.categoria),
+    Cantidad: i.cantidad, Unidad: i.unidad, Umbral: i.umbral,
+  }));
+  if (!items.length) { toast.err('No hay insumos para exportar.'); return; }
+  const ws = XLSX.utils.json_to_sheet(items);
+  ws['!cols'] = [{ wch:12 },{ wch:35 },{ wch:20 },{ wch:10 },{ wch:10 },{ wch:10 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+  XLSX.writeFile(wb, `inventario-gbsinventario-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  toast.ok('Excel generado.');
+}
+
+// Importa/actualiza insumos desde un Excel — empareja por ID (si viene) o
+// por nombre+categoría, igual criterio que UCVAcopio. La columna Categoría
+// se busca por NOMBRE contra store.categories (ya no es un enum fijo) — una
+// fila cuya categoría no exista en la BD se descarta con error, no se
+// inventa una por defecto (a diferencia de UCVAcopio, que caía a una fija).
+async function _importExcel(e) {
+  const input = e.target;
+  if (!input.files?.length) return;
+  if (typeof XLSX === 'undefined') { toast.err('Librería Excel no cargada.'); return; }
+  const file = input.files[0];
+  input.value = '';
+
+  if (!store.categories.length) { toast.err('No hay categorías creadas todavía — crea al menos una antes de importar.'); return; }
+
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const data = new Uint8Array(ev.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+      if (!rows.length) { toast.err('El archivo está vacío o no tiene el formato correcto.'); return; }
+
+      const first = rows[0];
+      if (!('Nombre' in first || 'nombre' in first) || !('Cantidad' in first || 'cantidad' in first)) {
+        toast.err('El Excel debe tener columnas: Nombre, Categoría, Cantidad, Unidad, Umbral. Usa "Exportar" para la plantilla correcta.');
+        return;
+      }
+
+      if (!confirm(`Se importarán ${rows.length} insumos desde "${file.name}". Los que coincidan por ID o nombre+categoría se actualizan. ¿Continuar?`)) return;
+
+      let ok = 0, err = 0;
+      for (const row of rows) {
+        try {
+          const nombre = String(row.Nombre || row.nombre || '').trim();
+          const catNombre = String(row['Categoría'] || row.Categoria || row.categoria || '').trim();
+          const cat = store.categories.find(c => c.nombre.toLowerCase() === catNombre.toLowerCase());
+          const cantidad = parseInt(row.Cantidad || row.cantidad || 0, 10) || 0;
+          const unidad = String(row.Unidad || row.unidad || 'und').trim() || 'und';
+          const umbral = parseInt(row.Umbral || row.umbral || 0, 10) || 0;
+
+          if (!nombre || !cat) { err++; continue; }
+          await store.addNuevo({ nombre, categoria: cat.id, unidad, umbral, cantidad });
+          ok++;
+        } catch { err++; }
+      }
+      toast.ok(`Importación completada: ${ok} insumos${err ? `, ${err} con error (categoría no encontrada)` : ''}`);
+      _onAdded?.(null, true);
+    } catch (ex) {
+      toast.err('Error leyendo el archivo: ' + (ex.message || ''));
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }

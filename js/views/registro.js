@@ -1,7 +1,7 @@
-// ── Vista de Bitácora (log de conteos) ────────────────────
-// Historial cronológico de cada registro de conteo, agrupado
-// por día. Permite borrar/corregir un registro (revierte el
-// delta sobre el insumo).
+// ── Vista de Bitácora (log de movimientos) ────────────────
+// Historial cronológico de cada movimiento (Recepción/Conteo/Egreso),
+// agrupado por día y filtrable por tipo. Permite borrar/corregir un
+// registro (revierte el delta sobre el insumo).
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
@@ -11,29 +11,27 @@ import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
 
 let _root = null;
+let _allLogs = [];       // último set cargado/filtrado por área, sin filtrar por tipo
+let _filtroTipo = 'todos'; // 'todos' | 'Recepción' | 'Conteo' | 'Egreso'
 
 function _headers() { return auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }); }
 
-// Egresos generados por una comanda (UCVComandas, o el Egreso Rápido propio
-// de Inventario) no traen contado_por en movements.note — el dato de "quién"
-// vive en la tabla `comandas`, no accesible directo con la anon key (trae
-// PII: cédulas/teléfonos/OCR). `comandas_movement_info` es una vista propia
-// que expone solo lo necesario para la Bitácora (ver
-// supabase/2026-07-27-bitacora-procedencia.sql).
-async function _fetchComandaInfo(movementIds) {
-  const map = new Map();
-  if (!movementIds.length) return map;
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/comandas_movement_info?select=movement_id,origen,autorizado_por,aprobado_por,created_by&movement_id=in.(${movementIds.join(',')})`,
-      { headers: _headers() }
-    );
-    if (res.ok) {
-      const rows = await res.json();
-      for (const r of rows) map.set(r.movement_id, r);
+const TIPOS = ['Recepción', 'Conteo', 'Egreso'];
+
+// movements.note (o el `origen` de un log local todavía sin sincronizar,
+// ver store.js#registrar) siempre termina en " - <Tipo>" — ver
+// actor_note() / apply_count / create_comanda_rapida en
+// supabase/new-project-schema.sql §8/§9/§9b.
+function _splitNote(note, origenLocal) {
+  for (const t of TIPOS) {
+    if (note && note.endsWith(` - ${t}`)) {
+      return { quien: note.slice(0, -(t.length + 3)), tipo: t };
     }
-  } catch { /* sin red o vista aún no aplicada: se degrada a mostrar el nombre libre */ }
-  return map;
+  }
+  // Log local todavía sin subir: movements.note aún no existe, se infiere
+  // del origen que ya viene marcado en el propio log (ver store.js).
+  if (origenLocal) return { quien: note || 'sin nombre', tipo: origenLocal === 'ingreso' ? 'Recepción' : 'Conteo' };
+  return { quien: note || 'sin nombre', tipo: null };
 }
 
 function _fmtDayLong(iso) {
@@ -50,7 +48,6 @@ function _fmtTime(ts) {
 export async function renderRegistro(rootEl) {
   _root = rootEl;
 
-  // Mostrar spinner mientras carga
   rootEl.innerHTML = `<div class="reg-wrap"><div class="reg-empty"><span class="reg-empty-t" style="opacity:.5">Cargando registros...</span></div></div>`;
 
   let logs = [];
@@ -65,35 +62,22 @@ export async function renderRegistro(rootEl) {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
-          const movementIds = [...new Set(data.map(m => m.movements?.id).filter(Boolean))];
-          const comandaMap = await _fetchComandaInfo(movementIds);
-
           logs = data.map(m => {
             const mv = m.movements || {};
             const pr = m.products || {};
             const delta = mv.direction === 'in' ? Math.abs(m.qnty) : -Math.abs(m.qnty);
-            const productName = pr.name || '';
-
-            // El área de quien contó ya viene embebida en movements.note como
-            // "Nombre · Área" (o "Nombre · Administrador"), armada del lado
-            // del cliente al momento de registrar (ver store.js#_conTag) —
-            // mismo formato que ya usa UCVAcopio, comparten la tabla.
-            const comanda = comandaMap.get(mv.id);
-            const contado_por = comanda
-              // Egreso por comanda: el nombre de quien la CREÓ no es relevante
-              // acá — lo que importa es quién autorizó la salida del insumo.
-              ? `Autorizado por ${comanda.autorizado_por || comanda.aprobado_por || 'sin especificar'}`
-              : (mv.note || 'sin nombre');
+            const { quien, tipo } = _splitNote(mv.note);
 
             return {
               id: mv.client_op_id || String(m.id),
               item_id: pr.client_id || '',
-              nombre: productName || '(sin nombre)',
+              nombre: pr.name || '(sin nombre)',
               categoria: pr.category_id,
               unidad: 'und',
               cantidad: delta,
               ts: mv.occurred_at || new Date().toISOString(),
-              contado_por,
+              contado_por: quien,
+              tipo,
               deleted_at: null,
             };
           });
@@ -103,15 +87,17 @@ export async function renderRegistro(rootEl) {
     } catch (e) { /* sin conexión, usamos local */ }
   }
 
-  // Si no se pudo cargar desde la nube, usar logs locales
   if (!fromCloud) {
-    logs = store.activeLogs();
+    logs = store.activeLogs().map(l => {
+      const { quien, tipo } = _splitNote(l.contado_por, l.origen);
+      return { ...l, contado_por: quien, tipo };
+    });
   } else {
     logs = logs.filter(l => !l.deleted_at);
-    // Si la nube no devolvió nada, combinar con logs locales
-    if (logs.length === 0) {
-      logs = store.activeLogs();
-    }
+    if (logs.length === 0) logs = store.activeLogs().map(l => {
+      const { quien, tipo } = _splitNote(l.contado_por, l.origen);
+      return { ...l, contado_por: quien, tipo };
+    });
   }
 
   // Un coordinador solo ve movimientos de su propia área (misma regla de
@@ -122,19 +108,34 @@ export async function renderRegistro(rootEl) {
     logs = logs.filter(l => String(l.categoria) === String(area));
   }
 
-  logs = logs.sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  _allLogs = logs.sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  _paint();
+}
+
+function _paint() {
+  if (!_root) return;
+  const logs = _filtroTipo === 'todos' ? _allLogs : _allLogs.filter(l => l.tipo === _filtroTipo);
+
+  const filtros = `
+    <div class="cnt-filters" id="reg-filters">
+      <button class="cnt-fbtn ${_filtroTipo === 'todos' ? 'active' : ''}" data-tipo="todos">Todos</button>
+      ${TIPOS.map(t => `<button class="cnt-fbtn ${_filtroTipo === t ? 'active' : ''}" data-tipo="${t}">${t}</button>`).join('')}
+    </div>`;
 
   if (!logs.length) {
-    rootEl.innerHTML = `
-      <div class="reg-wrap"><div class="reg-empty">
-        <svg width="46" height="46" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:.25"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 13l2 2 4-4"/></svg>
-        <div class="reg-empty-t">Sin registros todavía</div>
-        <div class="reg-empty-s">Cada cantidad que cuentes aparecerá aquí, agrupada por día.</div>
-      </div></div>`;
+    _root.innerHTML = `
+      <div class="reg-wrap">
+        ${filtros}
+        <div class="reg-empty">
+          <svg width="46" height="46" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:.25"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 13l2 2 4-4"/></svg>
+          <div class="reg-empty-t">Sin registros${_filtroTipo !== 'todos' ? ` de ${_filtroTipo}` : ''}</div>
+          <div class="reg-empty-s">Cada movimiento de inventario aparecerá aquí, agrupado por día.</div>
+        </div>
+      </div>`;
+    _wireFilters();
     return;
   }
 
-  // Agrupar por día local
   const byDay = {};
   for (const l of logs) {
     const d = localDate(l.ts);
@@ -143,7 +144,7 @@ export async function renderRegistro(rootEl) {
   const days = Object.keys(byDay).sort().reverse();
   const today = localDate(new Date());
 
-  let html = '<div class="reg-wrap">';
+  let html = `<div class="reg-wrap">${filtros}`;
   for (const d of days) {
     const recs = byDay[d];
     const totalPos = recs.reduce((s, r) => s + Math.max(0, r.cantidad), 0);
@@ -160,9 +161,10 @@ export async function renderRegistro(rootEl) {
       </div>`;
   }
   html += '</div>';
-  rootEl.innerHTML = html;
+  _root.innerHTML = html;
+  _wireFilters();
 
-  rootEl.querySelectorAll('.reg-del').forEach(btn => {
+  _root.querySelectorAll('.reg-del').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       const fallback = {
@@ -181,6 +183,17 @@ export async function renderRegistro(rootEl) {
   });
 }
 
+function _wireFilters() {
+  _root.querySelectorAll('#reg-filters .cnt-fbtn').forEach(b => {
+    b.addEventListener('click', () => {
+      _filtroTipo = b.dataset.tipo;
+      _paint();
+    });
+  });
+}
+
+const TIPO_TAG = { 'Recepción': 'tag-blue', 'Conteo': 'tag-amber', 'Egreso': 'tag-red' };
+
 function _rowHTML(r) {
   const neg = r.cantidad < 0;
   const col = catColor(r.categoria);
@@ -189,7 +202,7 @@ function _rowHTML(r) {
       <div class="reg-time">${_fmtTime(r.ts)}</div>
       <div class="reg-dot" style="background:${col}"></div>
       <div class="reg-info">
-        <div class="reg-name">${escHtml(r.nombre)}</div>
+        <div class="reg-name">${escHtml(r.nombre)} ${r.tipo ? `<span class="tag ${TIPO_TAG[r.tipo] || 'tag-gray'}" style="margin-left:4px">${r.tipo}</span>` : ''}</div>
         <div class="reg-meta">${escHtml(r.contado_por || 'sin nombre')}${r.cantidad === 0 ? ' · confirmó 0' : ''}</div>
       </div>
       <div class="reg-qty ${neg ? 'neg' : ''}">${neg ? '' : '+'}${r.cantidad.toLocaleString('es-VE')}</div>

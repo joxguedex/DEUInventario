@@ -70,6 +70,13 @@ export const store = {
     await _rpc('delete_category', { p_id: id });
     await this.loadCategories();
   },
+  // "Usuarios activos" en Resumen — cuenta admin+coordinador no baneados
+  // (ver count_active_users en supabase/new-project-schema.sql §8b y
+  // manage-users#set_active para el baneo en sí).
+  async countActiveUsers() {
+    try { return await _rpc('count_active_users', {}); }
+    catch { return null; }
+  },
   // Admin-only del lado del servidor (ver update_product_category en el
   // esquema) — reasigna la categoría de un producto ya existente.
   async setProductCategory(itemId, categoryId) {
@@ -174,6 +181,12 @@ export const store = {
         cantidad: aplicado,          // delta aplicado (puede ser negativo = corrección)
         ts: nowISO(),
         contado_por: item.contado_por,
+        // Quién disparó esto, no el signo del delta — determina el sufijo
+        // del `note` server-side (Recepción/Conteo, ver apply_count en
+        // supabase/new-project-schema.sql §9). 'conteo' por defecto: el
+        // único otro origen es Ingreso Rápido, que siempre lo manda
+        // explícito (ver ingresorapido.js).
+        origen: opts.origen || 'conteo',
         deleted_at: null,
       };
       this.logs.push(entry);
@@ -184,44 +197,15 @@ export const store = {
   },
 
   // ── Fijar el total contado exacto (calcula el delta y lo registra) ──
-  async setTotal(itemId, total) {
+  async setTotal(itemId, total, opts = {}) {
     const item = this.find(itemId);
     if (!item) return null;
     total = Math.max(0, Math.round(Number(total) || 0));
     const delta = total - item.cantidad;
-    if (delta !== 0) return this.registrar(itemId, delta);
+    if (delta !== 0) return this.registrar(itemId, delta, opts);
     // delta 0: si aún no estaba contado, marcarlo (confirma el total actual, incl. 0)
-    if (!item.contado) return this.registrar(itemId, 0, { forceLog: true });
+    if (!item.contado) return this.registrar(itemId, 0, { ...opts, forceLog: true });
     return item;
-  },
-
-  marcarCero(id) { return this.setTotal(id, 0); },
-
-  // ── Subir la diferencia de un insumo que YA conté ───────
-  // NO toca la cantidad local: la local ya es el número bueno. Solo encola el
-  // delta que le falta a la nube para alcanzarla. Lo usa "Revisar mi conteo"
-  // cuando una subida se perdió y la nube quedó atrás, sin obligar al
-  // voluntario a recontar ni pisar lo que otros contaron en otros insumos.
-  async subirDiferencia(itemId, delta) {
-    const item = this.find(itemId);
-    delta = Math.round(Number(delta) || 0);
-    if (!item || delta === 0) return null;
-
-    const entry = {
-      id: uid(),
-      item_id: item.id,
-      nombre: item.nombre,
-      categoria: item.categoria,
-      unidad: item.unidad,
-      cantidad: delta,
-      ts: nowISO(),
-      contado_por: _conTag(this.contadorNombre) || item.contado_por || null,
-      deleted_at: null,
-    };
-    this.logs.push(entry);
-    await db.logPut(entry);
-    await sync.enqueue('conteo', entry);
-    return entry;
   },
 
   // ── Crear un insumo nuevo (no estaba en el catálogo) ────
@@ -252,8 +236,9 @@ export const store = {
     }
     await db.put(item);
     await sync.enqueue('products', item);
-    if (cantidad > 0) await this.registrar(item.id, cantidad);
-    else await this.setTotal(item.id, 0);
+    // Único llamador: ingresorapido.js — siempre origen 'ingreso' (Recepción).
+    if (cantidad > 0) await this.registrar(item.id, cantidad, { origen: 'ingreso' });
+    else await this.setTotal(item.id, 0, { origen: 'ingreso' });
     return item;
   },
 

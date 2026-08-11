@@ -761,6 +761,33 @@ language sql stable as $$
       or p_category_id = public.current_category_id()
 $$;
 
+-- Construye el "note" atribuible de un movement: "Nombre Apellido - Área -
+-- Tipo" (Tipo = Recepción/Conteo/Egreso). Área = nombre real de la
+-- categoría del actor, 'General' si su área es 'general', o 'Administrador'
+-- si es admin (nunca tiene categoría propia). Centralizado acá porque lo
+-- usan apply_count (Recepción/Conteo, según quién llame) y
+-- create_comanda_rapida (siempre Egreso) — la Bitácora y la pestaña
+-- Ingresos filtran/agrupan leyendo este mismo formato, ver
+-- supabase/functions y js/views/registro.js / js/views/ingresos.js.
+create or replace function public.actor_note(p_tipo text) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare v_ci bigint; v_nombre text; v_area_label text;
+begin
+  v_ci := public.current_person_ci();
+  select (name || ' ' || surname) into v_nombre from public.persons where ci = v_ci;
+
+  if public.is_admin() then
+    v_area_label := 'Administrador';
+  elsif public.current_area() = 'general' then
+    v_area_label := 'General';
+  else
+    select nombre into v_area_label from public.categories where id = public.current_category_id();
+  end if;
+
+  return coalesce(v_nombre, 'Desconocido') || ' - ' || coalesce(v_area_label, '—') || ' - ' || p_tipo;
+end;
+$$;
+
 -- Completa el vínculo persons -> auth.users tras crear la cuenta con la
 -- Admin API. Solo la Edge Function la llama (service_role bypassa RLS y
 -- grants por diseño de Supabase) — no se otorga EXECUTE a anon/authenticated
@@ -877,13 +904,19 @@ end;
 $$;
 grant execute on function public.delete_category(bigint) to authenticated;
 
--- Lista personas CON inicio de sesión y su rol/área — admin-only. Hace
--- falta una RPC (no un SELECT REST normal) porque rol/área viven en
--- auth.users.app_metadata, tabla que PostgREST nunca expone a
--- anon/authenticated directamente. La Edge Function (manage-users) es quien
--- escribe ese rol/área; esta RPC solo lee, para pintar el hub de accesos.
+-- Lista personas CON inicio de sesión y su rol/área/estado — admin-only.
+-- Hace falta una RPC (no un SELECT REST normal) porque rol/área/baneo viven
+-- en auth.users (app_metadata/banned_until), tabla que PostgREST nunca
+-- expone a anon/authenticated directamente. La Edge Function (manage-users)
+-- es quien escribe rol/área/baneo; esta RPC solo lee, para pintar el hub de
+-- accesos y el conteo de "Usuarios activos" en Resumen.
+-- `active`: activar/desactivar (Edge Function #set_active) usa el baneo
+-- nativo de Supabase Auth (banned_until), no una columna propia — un
+-- usuario desactivado no puede ni siquiera iniciar sesión, no es solo un
+-- flag cosmético.
+drop function if exists public.list_users_with_access();
 create or replace function public.list_users_with_access() returns table(
-  ci bigint, name text, surname text, email text, role text, area text
+  ci bigint, name text, surname text, email text, role text, area text, active boolean
 )
 language plpgsql security definer set search_path = public as $$
 begin
@@ -893,7 +926,8 @@ begin
 
   return query
     select p.ci, p.name, p.surname, u.email::text,
-           u.raw_app_meta_data ->> 'role', u.raw_app_meta_data ->> 'area'
+           u.raw_app_meta_data ->> 'role', u.raw_app_meta_data ->> 'area',
+           (u.banned_until is null or u.banned_until < now())
     from public.persons p
     join auth.users u on u.id = p.auth_user_id
     where u.raw_app_meta_data ->> 'role' is not null
@@ -902,6 +936,19 @@ begin
 end;
 $$;
 grant execute on function public.list_users_with_access() to authenticated;
+
+-- Conteo de "Usuarios activos" para la pestaña Resumen — cualquier sesión
+-- puede verlo (a diferencia de list_users_with_access, que expone
+-- correo/área de cada quien y es admin-only), solo el número.
+create or replace function public.count_active_users() returns integer
+language sql security definer set search_path = public as $$
+  select count(*)::integer
+  from public.persons p
+  join auth.users u on u.id = p.auth_user_id
+  where u.raw_app_meta_data ->> 'role' in ('admin', 'coordinador')
+    and (u.banned_until is null or u.banned_until < now())
+$$;
+grant execute on function public.count_active_users() to authenticated;
 
 -- Reasigna la categoría de un producto — admin-only, a diferencia de crear/
 -- editar/borrar insumos (que sí puede un coordinador de esa categoría).
@@ -959,17 +1006,27 @@ grant execute on function public.update_own_profile(text, text, text, text) to a
 --     a auth.uid() en vez de un p_actor_ci enviado por el cliente)
 -- ══════════════════════════════════════════════════════════════════════════
 
+-- p_origen distingue QUIÉN llamó, no el signo del delta — ambos orígenes
+-- pueden sumar o restar: 'ingreso' = Ingreso Rápido (en la práctica solo
+-- suma, la UI no ofrece restar ahí), 'conteo' = los controles +/−/cantidad
+-- de la pestaña Insumos. Egreso Rápido nunca pasa por acá, ver
+-- create_comanda_rapida (siempre "Egreso").
 create or replace function public.apply_count(
   p_client_op_id       text,
   p_product_client_id  text,
-  p_delta              integer
+  p_delta              integer,
+  p_origen             text
 ) returns integer
 language plpgsql security definer set search_path = public as $$
-declare v_pid bigint; v_cat bigint; v_mid bigint; v_qty integer; v_ci bigint;
+declare v_pid bigint; v_cat bigint; v_mid bigint; v_qty integer; v_ci bigint; v_tipo text;
 begin
   if public.current_role() not in ('admin', 'coordinador') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
+  if p_origen not in ('ingreso', 'conteo') then
+    raise exception 'Origen inválido: debe ser ingreso o conteo';
+  end if;
+  v_tipo := case p_origen when 'ingreso' then 'Recepción' else 'Conteo' end;
   v_ci := public.current_person_ci();
 
   select id, category_id into v_pid, v_cat from public.products where client_id = p_product_client_id;
@@ -991,7 +1048,7 @@ begin
     insert into public.movements (direction, note, client_op_id, delivered_by)
       values (
         case when p_delta > 0 then 'in'::public.movement_direction else 'out'::public.movement_direction end,
-        null, p_client_op_id, v_ci
+        public.actor_note(v_tipo), p_client_op_id, v_ci
       ) returning id into v_mid;
 
     insert into public.movement_items (movement_id, product_id, qnty)
@@ -1007,7 +1064,7 @@ begin
   return v_qty;
 end;
 $$;
-grant execute on function public.apply_count(text, text, integer) to authenticated;
+grant execute on function public.apply_count(text, text, integer, text) to authenticated;
 
 create or replace function public.uncount_item(p_product_client_id text) returns void
 language plpgsql security definer set search_path = public as $$
@@ -1181,8 +1238,11 @@ begin
       values (v_comanda_id, v_pname, v_pid, v_qty, v_punidad);
   end loop;
 
+  -- movements.note SIEMPRE es el tag estructurado "Nombre - Área - Tipo"
+  -- (acá, Tipo = 'Egreso') — p_note es texto libre del formulario, va aparte
+  -- en comandas.notas (arriba), nunca pisa este formato.
   insert into public.movements (direction, destination, note, client_op_id, occurred_at, delivered_by)
-    values ('out', v_ubicacion_nombre, p_note, p_client_op_id, now(), v_ci)
+    values ('out', v_ubicacion_nombre, public.actor_note('Egreso'), p_client_op_id, now(), v_ci)
     returning id into v_movement_id;
 
   update public.comandas set movement_id = v_movement_id where id = v_comanda_id;

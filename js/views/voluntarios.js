@@ -251,6 +251,22 @@ export function renderVoluntarios(container) {
     }
   };
 
+  // Activar/desactivar: a diferencia de "Revocar", no toca rol/área — solo
+  // bloquea/desbloquea el login (baneo nativo de Supabase Auth, ver
+  // manage-users#setActive). Pensado para bajas temporales, sin tener que
+  // reconfigurar el área al reactivar.
+  window.toggleActiveVolunteer = async function (ci, activarAhora, label) {
+    const accion = activarAhora ? 'activar' : 'desactivar';
+    if (!confirm(`¿${activarAhora ? 'Activar' : 'Desactivar'} a ${label}?${activarAhora ? '' : ' Pierde la sesión de inmediato.'}`)) return;
+    try {
+      await _edgeFn('set_active', { ci, active: activarAhora });
+      toast.ok(`Usuario ${activarAhora ? 'activado' : 'desactivado'}.`);
+      await loadVolunteers(container);
+    } catch (err) {
+      toast.err(err.message || `Error al ${accion}`);
+    }
+  };
+
   loadVolunteers(container);
 }
 
@@ -265,8 +281,10 @@ async function loadVolunteers(container) {
       return;
     }
 
-    listEl.innerHTML = data.map(v => `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; margin-bottom:10px; background:var(--s1,#fff); border:1px solid var(--bdr); border-radius:12px; gap:12px;">
+    listEl.innerHTML = data.map(v => {
+      const nombreEsc = (v.name || '').replace(/'/g, "\\'") + ' ' + (v.surname || '').replace(/'/g, "\\'");
+      return `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; margin-bottom:10px; background:var(--s1,#fff); border:1px solid var(--bdr); border-radius:12px; gap:12px; ${v.active === false ? 'opacity:.6' : ''}">
         <div style="flex:1; min-width:0;">
           <div style="font-weight:700; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
             ${escHtml(v.name)} ${escHtml(v.surname)}
@@ -275,14 +293,17 @@ async function loadVolunteers(container) {
           <div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap; align-items:center;">
             <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--s2); border:1px solid var(--bdr);">${ROLE_LABEL[v.role] || v.role}</span>
             <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--s2); border:1px solid var(--bdr);">${escHtml(_areaLabel(v.area))}</span>
+            <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; ${v.active === false ? 'background:var(--red-bg);color:var(--red)' : 'background:var(--grn-bg,#ECFDF5);color:var(--green)'}">${v.active === false ? 'Inactivo' : 'Activo'}</span>
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0;">
           <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--s2); border:1px solid var(--bdr); cursor:pointer; color:inherit; white-space:nowrap;" onclick="window.editVolunteer(${v.ci})">Editar</button>
-          <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--red-bg); border:1px solid #FCA5A5; color:var(--red); cursor:pointer; white-space:nowrap;" onclick="window.revokeVolunteer(${v.ci}, '${(v.name || '').replace(/'/g, "\\'")} ${(v.surname || '').replace(/'/g, "\\'")}')">Revocar</button>
+          <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--s2); border:1px solid var(--bdr); cursor:pointer; color:inherit; white-space:nowrap;" onclick="window.toggleActiveVolunteer(${v.ci}, ${v.active === false}, '${nombreEsc}')">${v.active === false ? 'Activar' : 'Desactivar'}</button>
+          <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--red-bg); border:1px solid #FCA5A5; color:var(--red); cursor:pointer; white-space:nowrap;" onclick="window.revokeVolunteer(${v.ci}, '${nombreEsc}')">Revocar</button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (err) {
     listEl.innerHTML = `<div class="reg-empty"><span class="reg-empty-t" style="color:var(--red);">${escHtml(err.message || 'Error al cargar usuarios')}</span></div>`;
   }

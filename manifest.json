@@ -1,7 +1,7 @@
 {
-  "name": "GBSInventario — Conteo Físico",
+  "name": "GBSInventario — Gestión de Inventario",
   "short_name": "GBSInventario",
-  "description": "Conteo físico real de los insumos del centro de acopio de la UCV.",
+  "description": "Gestión de inventario, ingresos y egresos de insumos.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F7F5F2",

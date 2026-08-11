@@ -417,7 +417,7 @@ function _searchProducto(q, box, idx) {
 // nada la refleja automáticamente en store.items — a diferencia de
 // store.registrar() (Ingreso Rápido), que actualiza la cantidad local de
 // forma optimista ANTES de confirmar con el servidor. Sin este parche, la
-// fila del insumo en Conteo Físico se queda con el valor viejo: el próximo
+// fila del insumo en Insumos se queda con el valor viejo: el próximo
 // pull incremental (sync.run()/_pull()) filtra por products.updated_at, y
 // un egreso solo toca inventory.qnty (vía trigger), así que ese producto no
 // vuelve a aparecer en el pull hasta que algo más lo toque. Se marca

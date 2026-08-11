@@ -101,6 +101,7 @@ Deno.serve(async (req: Request) => {
       case 'revoke_access':    return await revokeAccess(body);
       case 'revoke_by_area':   return await revokeByArea(body);
       case 'reset_password':   return await resetPassword(body);
+      case 'set_active':       return await setActive(body);
       default:
         return json({ error: `Acción desconocida: ${String(action)}` }, 400);
     }
@@ -199,6 +200,34 @@ async function revokeAccess(body: Record<string, unknown>) {
   const { error } = await admin.auth.admin.updateUserById(authUserId, { app_metadata: { role: null, area: null } });
   if (error) throw error;
   await admin.auth.admin.signOut(authUserId, 'global').catch(() => {});
+  return json({ ok: true });
+}
+
+// ── set_active — activar/desactivar (equivalente al "activar/desactivar
+// voluntarios" de UCVAcopio, generalizado a cualquier usuario con acceso).
+// A diferencia de revoke_access, esto NO toca rol/área — es reversible sin
+// tener que volver a configurar nada: usa el baneo nativo de Supabase Auth
+// (banned_until), que bloquea el login por sí solo (no depende de que el
+// frontend chequee un flag). Desactivar además cierra la sesión activa, por
+// la misma razón que revoke_access.
+async function setActive(body: Record<string, unknown>) {
+  const ci = Number(body.ci);
+  const active = !!body.active;
+  if (!ci) return json({ error: 'Cédula inválida.' }, 400);
+
+  const authUserId = await _authUserIdFor(ci);
+  if (!authUserId) return json({ error: 'Esa persona no tiene inicio de sesión.' }, 404);
+
+  const { data: u } = await admin.auth.admin.getUserById(authUserId);
+  if ((u?.user?.app_metadata as Record<string, unknown> | undefined)?.role === 'admin') {
+    return json({ error: 'No se puede activar/desactivar a un admin desde acá.' }, 403);
+  }
+
+  const { error } = await admin.auth.admin.updateUserById(authUserId, {
+    ban_duration: active ? 'none' : '876000h', // ~100 años — "hasta que se reactive a mano"
+  });
+  if (error) throw error;
+  if (!active) await admin.auth.admin.signOut(authUserId, 'global').catch(() => {});
   return json({ ok: true });
 }
 

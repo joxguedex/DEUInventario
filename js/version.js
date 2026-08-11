@@ -1,4 +1,5 @@
-// Distintivo de versión visible (topnav + topbar móvil). Contador
-// secuencial simple de despliegues (+1 por push a main) — no sigue semver.
-// Mismo criterio que el repo hermano UCVAcopio (ver su CLAUDE.md).
-export const APP_VERSION = 'v68';
+// Distintivo de versión visible (topnav + topbar móvil). Contador simple
+// de despliegues: +0.01 en cada commit&push a main (ver CLAUDE.md en la
+// raíz del repo) — no sigue semver. Reiniciado a v0.01 en la migración a
+// GBSInventario independiente.
+export const APP_VERSION = 'v0.01';
