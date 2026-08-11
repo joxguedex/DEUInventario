@@ -88,15 +88,15 @@ function _paint() {
             const w = Math.round(d.unidades / maxUnidades * 100);
             const col = catColor(c);
             return `<div class="stats-cat-row">
-              <div class="stats-cat-info">
-                <div class="stats-cat-dot" style="background:${col}"></div>
-                <div>
+              <div class="stats-cat-top">
+                <div class="stats-cat-info">
+                  <div class="stats-cat-dot" style="background:${col}"></div>
                   <div class="stats-cat-name">${escHtml(catLabel(c))}</div>
-                  <div class="stats-cat-sub">${d.total.toLocaleString('es-VE')} insumo${d.total !== 1 ? 's' : ''}</div>
                 </div>
+                <div class="stats-cat-num">${d.unidades.toLocaleString('es-VE')}</div>
               </div>
-              <div class="stats-cat-bar-wrap"><div class="stat-bar-track"><div class="stat-bar-fill" style="width:${w}%;background:${col}"></div></div></div>
-              <div class="stats-cat-num">${d.unidades.toLocaleString('es-VE')}</div>
+              <div class="stats-cat-sub">${d.total.toLocaleString('es-VE')} insumo${d.total !== 1 ? 's' : ''}</div>
+              <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${w}%;background:${col}"></div></div>
             </div>`;
           }).join('')}
         </div>` : `<div class="empty"><div class="empty-title">Sin categorías todavía</div><div class="empty-txt">Un admin puede crear la primera desde Insumos.</div></div>`}

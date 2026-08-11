@@ -128,12 +128,17 @@ input[type=number]{-moz-appearance:textfield}
 .qa-switch-btn:hover{color:rgba(255,255,255,.8)}
 .qa-switch-btn.active{background:var(--amber);color:#1a1205}
 .qa-switch-btn[data-mode="egreso"].active{background:var(--red);color:#fff}
-.qa-head{display:flex;align-items:center;gap:11px;padding-bottom:13px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.qa-head{display:flex;align-items:center;gap:11px;padding-bottom:13px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}
 .qa-head-icon{width:32px;height:32px;border-radius:9px;flex-shrink:0;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.28);display:flex;align-items:center;justify-content:center;color:var(--amber)}
 .qa-title{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:rgba(255,255,255,.92);line-height:1.2}
 .qa-sub{font-size:10.5px;color:rgba(255,255,255,.3);margin-top:2px;letter-spacing:.2px}
 .qa-close-m{display:none;margin-left:auto;width:32px;height:32px;border-radius:50%;color:rgba(255,255,255,.5);background:rgba(255,255,255,.06);align-items:center;justify-content:center;flex-shrink:0}
-.qa-body{flex:1}
+/* min-height:0 + overflow-y:auto: sin esto, el body (flex:1 dentro de un
+   ancestro con overflow) se estira a su alto de contenido natural en vez de
+   recortarse al espacio disponible — el carrito de Egreso Rápido podía
+   crecer sin límite y terminaba tapando el pie de admin (#qa-shell-foot).
+   Ver también .eg-body abajo, que hereda esta clase. */
+.qa-body{flex:1;min-height:0;overflow-y:auto}
 
 .qa-searchbox{position:relative;display:flex;align-items:center}
 .qa-search-ico{position:absolute;left:13px;color:rgba(255,255,255,.35);pointer-events:none}
@@ -418,62 +423,71 @@ input[type=number]{-moz-appearance:textfield}
 .rsm-ing-detail-total{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--teal);text-align:right}
 .rsm-ing-detail-total span{display:block;font-family:'Inter',sans-serif;font-weight:400;font-size:10.5px;color:var(--t4);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
 
-/* ═══ EGRESO RÁPIDO (dentro de #qa-panel-egreso, ver .quickadd arriba) ═══ */
+/* ═══ EGRESO RÁPIDO (dentro de #qa-panel-egreso, ver .quickadd arriba) ═══
+   Campos/espaciados compactos a propósito: este panel es una columna
+   angosta de 300px (desktop) donde el carrito puede crecer fila a fila —
+   .eg-body ya scrollea internamente (ver .qa-body arriba), pero campos más
+   chicos significan menos scroll y más filas visibles a la vez. */
 .eg-head{border-bottom:1px solid rgba(255,255,255,.08)}
 .eg-head-icon{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:#fca5a5}
 .eg-close{display:flex}
-.eg-body{display:flex;flex-direction:column;gap:20px;max-width:520px;width:100%;margin:0 auto;padding-top:18px}
+.eg-body{display:flex;flex-direction:column;gap:14px;max-width:520px;width:100%;margin:0 auto;padding-top:12px}
 
-.eg-section{display:flex;flex-direction:column;gap:8px}
+.eg-section{display:flex;flex-direction:column;gap:6px}
 .eg-label{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.4)}
 
-.eg-sol-chip{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.14);border-radius:var(--r-sm)}
-.eg-sol-name{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14.5px;color:#fff}
-.eg-x{width:26px;height:26px;border-radius:50%;color:rgba(255,255,255,.5);background:rgba(255,255,255,.08);flex-shrink:0}
+.eg-sol-chip{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.14);border-radius:var(--r-sm)}
+.eg-sol-name{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13.5px;color:#fff}
+.eg-x{width:24px;height:24px;border-radius:50%;color:rgba(255,255,255,.5);background:rgba(255,255,255,.08);flex-shrink:0}
 .eg-x:hover{background:rgba(255,255,255,.16);color:#fff}
 
-.eg-sol-row{display:flex;gap:8px;align-items:center}
+.eg-sol-row{display:flex;gap:6px;align-items:center}
 .eg-sol-searchbox{flex:1;min-width:0}
-.eg-add-persona-btn{width:44px;height:44px;flex-shrink:0;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:rgba(255,255,255,.7);font-size:20px;line-height:1}
+.eg-add-persona-btn{width:38px;height:38px;flex-shrink:0;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:rgba(255,255,255,.7);font-size:18px;line-height:1}
 .eg-add-persona-btn:hover{background:rgba(255,255,255,.14);color:#fff}
 
-.eg-persona-form{margin-top:10px;display:flex;flex-direction:column;gap:8px;padding:14px;background:rgba(255,255,255,.04);border:1.5px dashed rgba(255,255,255,.16);border-radius:var(--r-sm)}
-.eg-persona-title{font-size:11.5px;font-weight:700;letter-spacing:.3px;color:rgba(255,255,255,.45);text-transform:uppercase}
-.eg-persona-row{display:flex;gap:8px}
+/* Nueva persona: ocupa TODO el cuerpo de Egreso Rápido mientras está
+   activa (ver egresorapido.js#_body — Solicitante/Ítems/Confirmar se
+   ocultan por completo), así que no necesita destacarse con un
+   recuadro/borde propio — ya es el único contenido visible. */
+.eg-persona-form{display:flex;flex-direction:column;gap:6px}
+.eg-persona-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:2px}
+.eg-persona-title{font-size:11px;font-weight:700;letter-spacing:.3px;color:rgba(255,255,255,.45);text-transform:uppercase}
+.eg-persona-row{display:flex;gap:6px}
 .eg-persona-row>*{flex:1;min-width:0}
-.eg-input{width:100%;min-width:0;padding:11px 12px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:13.5px}
+.eg-input{width:100%;min-width:0;padding:9px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:13px}
 .eg-input::placeholder{color:rgba(255,255,255,.3)}
 .eg-input:focus{outline:none;border-color:#fca5a5;box-shadow:0 0 0 3px rgba(239,68,68,.18)}
-.eg-persona-tel-sel{flex:0 0 84px}
-.eg-persona-actions{display:flex;align-items:center;gap:14px;margin-top:2px}
-.eg-persona-save{padding:11px 18px;border-radius:var(--r-sm);background:var(--red);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13.5px}
+.eg-persona-tel-sel{flex:0 0 76px}
+.eg-persona-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:4px}
+.eg-persona-save{flex-shrink:0;padding:9px 14px;border-radius:var(--r-sm);background:var(--red);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px}
 .eg-persona-save:hover{filter:brightness(1.1)}
 .eg-persona-save:disabled{opacity:.5}
 
 .eg-searchbox{position:relative}
-.eg-searchbox input,.eg-row-input{width:100%;padding:13px 14px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:14.5px}
+.eg-searchbox input,.eg-row-input{width:100%;padding:10px 12px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:13.5px}
 .eg-searchbox input::placeholder,.eg-row-input::placeholder{color:rgba(255,255,255,.3)}
 .eg-searchbox input:focus,.eg-row-input:focus{outline:none;border-color:#fca5a5;box-shadow:0 0 0 3px rgba(239,68,68,.18)}
-.eg-sugg{margin-top:6px;display:flex;flex-direction:column;gap:2px;max-height:32vh;overflow-y:auto}
+.eg-sugg{margin-top:6px;display:flex;flex-direction:column;gap:2px;max-height:28vh;overflow-y:auto}
 .eg-sugg-empty{padding:10px 12px;font-size:12.5px;color:rgba(255,255,255,.3)}
 
-.eg-cart{display:flex;flex-direction:column;gap:10px}
-.eg-row-wrap{display:flex;flex-direction:column;gap:6px}
-.eg-row{display:flex;align-items:center;gap:10px}
-.eg-row-item{flex:1;min-width:0;display:flex;flex-direction:column;padding:12px 14px;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.14);border-radius:var(--r-sm)}
-.eg-row-name{font-size:14px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.eg-row-stock{font-size:11px;color:rgba(255,255,255,.4);margin-top:2px}
-.eg-row-qty{width:76px;flex-shrink:0;padding:12px 8px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:16px;font-weight:600;font-family:'JetBrains Mono',monospace;text-align:center}
+.eg-cart{display:flex;flex-direction:column;gap:8px}
+.eg-row-wrap{display:flex;flex-direction:column;gap:4px}
+.eg-row{display:flex;align-items:center;gap:8px}
+.eg-row-item{flex:1;min-width:0;display:flex;flex-direction:column;padding:9px 12px;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.14);border-radius:var(--r-sm)}
+.eg-row-name{font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eg-row-stock{font-size:10.5px;color:rgba(255,255,255,.4);margin-top:1px}
+.eg-row-qty{width:60px;flex-shrink:0;padding:9px 6px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:14px;font-weight:600;font-family:'JetBrains Mono',monospace;text-align:center}
 .eg-row-qty:focus{outline:none;border-color:#fca5a5}
 .eg-qty-warn{border-color:var(--red)!important;box-shadow:0 0 0 3px rgba(239,68,68,.2)}
-.eg-row-x{width:36px;height:36px;border-radius:var(--r-sm);color:rgba(255,255,255,.5);background:rgba(255,255,255,.06);flex-shrink:0}
+.eg-row-x{width:32px;height:32px;border-radius:var(--r-sm);color:rgba(255,255,255,.5);background:rgba(255,255,255,.06);flex-shrink:0}
 .eg-row-x:hover{background:rgba(239,68,68,.2);color:#fca5a5}
-.eg-row-warn{font-size:11.5px;color:#fca5a5;padding:0 2px}
+.eg-row-warn{font-size:11px;color:#fca5a5;padding:0 2px}
 .eg-row-empty{width:100%}
 .eg-row-searchbox{flex:1}
 
-.eg-offline-warn{font-size:12.5px;color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:10px 12px}
-.eg-submit{width:100%;padding:18px 16px;border-radius:var(--r-sm);background:var(--red);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;box-shadow:0 3px 14px rgba(239,68,68,.4);transition:filter .13s,transform .1s}
+.eg-offline-warn{font-size:12px;color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:8px 10px}
+.eg-submit{width:100%;flex-shrink:0;padding:13px 16px;border-radius:var(--r-sm);background:var(--red);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14.5px;box-shadow:0 3px 14px rgba(239,68,68,.4);transition:filter .13s,transform .1s}
 .eg-submit:hover:not(:disabled){filter:brightness(1.1)}
 .eg-submit:active:not(:disabled){transform:scale(.98)}
 .eg-submit:disabled{opacity:.4;box-shadow:none}
@@ -805,21 +819,21 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .stat-bar-fill{height:100%;border-radius:99px;transition:width .4s ease}
 .stat-bar-sub{font-size:11px;color:var(--t4);margin-top:3px}
 
-/* ── Insumos por categoría (Resumen) — fila compacta de una sola línea:
-   punto + nombre/subtítulo | barra | número, portado 1:1 de
-   UCVAcopio/css/styles.css. Antes esta sección se veía mal (info arriba Y
-   abajo de la barra, sin separación clara entre filas, fuente más grande
-   que el resto del sistema) porque estas reglas nunca se habían agregado —
-   .stats-cat-row quedaba sin estilo, cada elemento caía en su propia línea. */
-.stats-cat-grid{display:flex;flex-direction:column;gap:12px}
-.stats-cat-row{display:grid;grid-template-columns:160px 1fr 70px;align-items:center;gap:12px}
-@media(max-width:600px){.stats-cat-row{grid-template-columns:120px 1fr 50px}}
-.stats-cat-info{display:flex;align-items:center;gap:10px;min-width:0}
-.stats-cat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+/* ── Insumos por categoría (Resumen) — nombre + número en una línea, la
+   barra ocupa su propia línea completa debajo. UCVAcopio pone la barra al
+   lado del nombre en una sola fila (sus categorías son un enum corto y
+   fijo); acá el admin escribe el nombre libremente, así que uno largo se
+   superponía con la barra — separarlos en dos líneas lo evita sin
+   necesidad de truncar. */
+.stats-cat-grid{display:flex;flex-direction:column}
+.stats-cat-row{display:flex;flex-direction:column;gap:6px;padding:11px 0;border-bottom:1px solid var(--s2)}
+.stats-cat-row:last-child{border-bottom:none}
+.stats-cat-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.stats-cat-info{display:flex;align-items:center;gap:8px;min-width:0}
+.stats-cat-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .stats-cat-name{font-size:13px;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stats-cat-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--t1);flex-shrink:0}
 .stats-cat-sub{font-size:11px;color:var(--t4)}
-.stats-cat-bar-wrap{flex:1;min-width:0}
-.stats-cat-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--t1);text-align:right}
 
 /* ═══ Herramientas admin del panel de Ingreso Rápido ═══════ */
 .qa-admin-tools{display:flex;flex-direction:column;gap:6px;margin-top:10px}

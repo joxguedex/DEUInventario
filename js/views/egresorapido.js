@@ -162,14 +162,20 @@ function _solicitanteBlock() {
       </div>
       <button class="eg-add-persona-btn" id="eg-add-persona-btn" type="button" title="Agregar nueva persona">+</button>
     </div>
-    <div class="eg-sugg" id="eg-sol-sugg"></div>
-    ${_addingPersona ? _personaFormHtml() : ''}`;
+    <div class="eg-sugg" id="eg-sol-sugg"></div>`;
 }
 
+// Ocupa todo el cuerpo de Egreso Rápido mientras está activo (ver _body()) —
+// no aparece "por debajo" de Solicitante ni compite por espacio con Ítems.
 function _personaFormHtml() {
   return `
     <div class="eg-persona-form">
-      <div class="eg-persona-title">Nueva persona · sin acceso al sistema</div>
+      <div class="eg-persona-head">
+        <div class="eg-persona-title">Nueva persona · sin acceso al sistema</div>
+        <button class="eg-x" id="eg-pqa-back" type="button" aria-label="Volver">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
       <input class="eg-input" id="eg-pqa-ci" type="number" inputmode="numeric" placeholder="Cédula">
       <div class="eg-persona-row">
         <input class="eg-input" id="eg-pqa-nombre" placeholder="Nombre" maxlength="80">
@@ -220,6 +226,12 @@ function _rowHtml(row, idx) {
 }
 
 function _body() {
+  // "Nueva persona" toma todo el cuerpo mientras está activo: Solicitante,
+  // Ítems y Confirmar no aparecen hasta guardar o cancelar (ver _wire()).
+  if (_addingPersona) {
+    return `<div class="eg-section">${_personaFormHtml()}</div>`;
+  }
+
   const puedeEnviar = !!_solicitante
     && _rows.some(r => r.item && r.cantidad > 0)
     && sync.online
@@ -251,6 +263,17 @@ function _paint() {
 function _wire() {
   _host.querySelector('#eg-close')?.addEventListener('click', closeEgreso);
 
+  // "Nueva persona" ocupa todo el cuerpo (ver _body()): Solicitante/Ítems/
+  // Confirmar no están en el DOM en este modo, nada más que cablear.
+  if (_addingPersona) {
+    const back = () => { _addingPersona = false; _paint(); };
+    _host.querySelector('#eg-pqa-back')?.addEventListener('click', back);
+    _host.querySelector('#eg-pqa-cancel')?.addEventListener('click', back);
+    _host.querySelector('#eg-pqa-save')?.addEventListener('click', _crearPersonaRapida);
+    _host.querySelector('#eg-pqa-ci')?.focus();
+    return;
+  }
+
   // ── Solicitante ──
   if (_solicitante) {
     _host.querySelector('#eg-sol-clear')?.addEventListener('click', () => { _solicitante = null; _paint(); });
@@ -266,14 +289,9 @@ function _wire() {
     });
 
     _host.querySelector('#eg-add-persona-btn')?.addEventListener('click', () => {
-      _addingPersona = !_addingPersona;
+      _addingPersona = true;
       _paint();
     });
-    if (_addingPersona) {
-      _host.querySelector('#eg-pqa-cancel')?.addEventListener('click', () => { _addingPersona = false; _paint(); });
-      _host.querySelector('#eg-pqa-save')?.addEventListener('click', _crearPersonaRapida);
-      _host.querySelector('#eg-pqa-ci')?.focus();
-    }
   }
 
   // ── Filas del carrito ──
