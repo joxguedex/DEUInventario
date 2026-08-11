@@ -92,7 +92,6 @@ export function renderLoginWall(container) {
       </div>
       <div class="adm-err" id="adm-err"></div>
       <button class="adm-btn adm-btn-primary" id="adm-login" ${auth.enabled ? '' : 'disabled'}>Entrar al Sistema</button>
-      <div class="adm-note">Solo administradores y coordinadores tienen acceso a Inventario.</div>
     </div>`;
 
   const email = container.querySelector('#adm-email');

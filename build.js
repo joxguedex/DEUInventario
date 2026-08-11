@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const schema = process.env.DB_SCHEMA || 'new_schema_archive';
+const schema = process.env.DB_SCHEMA || 'public';
 
 const content = `// GENERADO por build.js a partir de la env var DB_SCHEMA de Vercel — no editar a mano en un deploy.
 // En desarrollo local (sin build) se usa el valor committeado en este archivo.
