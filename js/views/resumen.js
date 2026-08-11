@@ -34,7 +34,7 @@ function _paint() {
   _root.innerHTML = `
     <div class="stats-wrap">
       <div class="stats-cards">
-        <div class="stat-card stat-card-total"><div class="stat-card-num">${s.total.toLocaleString('es-VE')}</div><div class="stat-card-lbl">insumos</div></div>
+        <div class="stat-card stat-card-total"><div class="stat-card-num">${s.unidades.toLocaleString('es-VE')}</div><div class="stat-card-lbl">unidades</div></div>
         <div class="stat-card"><div class="stat-card-num">${store.categories.length.toLocaleString('es-VE')}</div><div class="stat-card-lbl">categorías</div></div>
         <div class="stat-card ${criticos ? 'stat-card-crit' : 'stat-card-ok'}"><div class="stat-card-num">${criticos.toLocaleString('es-VE')}</div><div class="stat-card-lbl">bajo umbral</div></div>
         <div class="stat-card stat-card-ok"><div class="stat-card-num" id="rsm-usuarios-activos">–</div><div class="stat-card-lbl">usuarios activos</div></div>

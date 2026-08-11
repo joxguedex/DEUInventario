@@ -26,8 +26,11 @@ function _catOptions() {
   return auth.isCoordinador() ? all.filter(c => String(c.id) === String(auth.area())) : all;
 }
 
-let _shell = null; // <aside id="ingresorapido"> — abre/cierra la hoja móvil (compartido con Egreso)
-let _host = null;  // <div id="qa-panel-ingreso"> — donde se pinta este panel
+let _shell = null;  // <aside id="ingresorapido"> — abre/cierra la hoja móvil (compartido con Egreso)
+let _host = null;   // <div id="qa-panel-ingreso"> — donde se pinta este panel
+let _footEl = null; // <div id="qa-shell-foot"> — pie compartido (nombre + herramientas admin), NO se
+                     // oculta al alternar a Egreso: ver app.js#_setQaMode, que solo cambia qué panel
+                     // de contenido se ve, no el pie.
 let _onAdded = null;
 let _sel = null;   // insumo seleccionado
 let _new = null;   // { nombre } modo crear
@@ -35,16 +38,19 @@ let _new = null;   // { nombre } modo crear
 export function renderIngresoRapido(shellEl, opts = {}) {
   _shell = shellEl;
   _host = shellEl.querySelector('#qa-panel-ingreso') || shellEl;
+  _footEl = shellEl.querySelector('#qa-shell-foot');
   _onAdded = opts.onAdded || null;
   // Si no hay nombre guardado manualmente, usar el nombre de la cuenta con sesión
   if (!store.contadorNombre && auth.name()) {
     store.setContador(auth.name());
   }
   _paint();
+  _paintFoot();
 }
 
-// Cierra el panel a estado buscador (usado al cerrar la hoja móvil)
-export function resetIngresoRapido() { _sel = null; _new = null; _paint(); }
+// Cierra el panel a estado buscador (usado al cerrar la hoja móvil) y
+// refresca el pie (nombre del contador puede haber cambiado, ver app.js).
+export function resetIngresoRapido() { _sel = null; _new = null; _paint(); _paintFoot(); }
 
 function _head() {
   return `
@@ -92,8 +98,14 @@ function _foot() {
 
 function _paint() {
   if (!_host) return;
-  _host.innerHTML = _head() + `<div class="qa-body" id="qa-body">${_body()}</div>` + _foot();
+  _host.innerHTML = _head() + `<div class="qa-body" id="qa-body">${_body()}</div>`;
   _wire();
+}
+
+function _paintFoot() {
+  if (!_footEl) return;
+  _footEl.innerHTML = _foot();
+  if (auth.isAdmin()) _wireAdminTools(_footEl);
 }
 
 function _body() {
@@ -167,7 +179,6 @@ function _body() {
 function _wire() {
   _host.querySelector('#qa-close-m')?.addEventListener('click', () => closeSheet());
   _host.querySelector('#qa-back')?.addEventListener('click', () => { _sel = null; _new = null; _paint(); _host.querySelector('#qa-search')?.focus(); });
-  if (auth.isAdmin()) _wireAdminTools();
 
   if (_sel) {
     const deltaInp  = _host.querySelector('#qa-delta');
@@ -282,12 +293,14 @@ export function closeSheet() {
 }
 
 // ── Herramientas admin (portadas de UCVAcopio/index.html) ──────────────
-function _wireAdminTools() {
-  _host.querySelector('#qa-export-json')?.addEventListener('click', _exportJSON);
-  _host.querySelector('#qa-refresh-local')?.addEventListener('click', _refreshLocal);
-  _host.querySelector('#qa-export-excel')?.addEventListener('click', _exportExcel);
-  _host.querySelector('#qa-import-excel')?.addEventListener('change', _importExcel);
-  _host.querySelector('#qa-time-machine')?.addEventListener('click', openAdminPanel);
+// Se cablean contra el pie compartido (_footEl), no contra _host: viven
+// fuera de _paint() para no desaparecer al alternar a Egreso Rápido.
+function _wireAdminTools(el) {
+  el.querySelector('#qa-export-json')?.addEventListener('click', _exportJSON);
+  el.querySelector('#qa-refresh-local')?.addEventListener('click', _refreshLocal);
+  el.querySelector('#qa-export-excel')?.addEventListener('click', _exportExcel);
+  el.querySelector('#qa-import-excel')?.addEventListener('change', _importExcel);
+  el.querySelector('#qa-time-machine')?.addEventListener('click', openAdminPanel);
 }
 
 async function _exportJSON() {

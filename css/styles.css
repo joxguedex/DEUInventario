@@ -204,7 +204,6 @@ input[type=number]{-moz-appearance:textfield}
 
 /* ═══ CONTEO ═══ */
 .cnt-wrap{max-width:920px;margin:0 auto}
-.cnt-topcard{background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r);padding:16px 20px;box-shadow:var(--sh);margin-bottom:16px}
 .ctc-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
 .ctc-progress-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;color:var(--t2)}
 .ctc-progress-pct{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:var(--teal)}

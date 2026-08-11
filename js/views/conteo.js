@@ -42,7 +42,6 @@ export function renderConteo(rootEl) {
   _root = rootEl;
   _root.innerHTML = `
     <div class="cnt-wrap">
-      <div class="cnt-topcard" id="cnt-topcard"></div>
       <div class="cnt-controls">
         <div class="cnt-search">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -57,23 +56,14 @@ export function renderConteo(rootEl) {
       <div class="cnt-list" id="cnt-list"></div>
     </div>`;
   _wireControls();
-  renderTop();
   renderList();
 }
 
-export function renderTop() {
-  const el = _root?.querySelector('#cnt-topcard');
-  if (!el) return;
-  const s = store.stats();
-  const criticos = store.visibleItems().filter(i => !i.deleted_at && i.umbral > 0 && i.cantidad < i.umbral).length;
-  el.innerHTML = `
-    <div class="stats-cards">
-      <div class="stat-card stat-card-total"><div class="stat-card-num">${s.total.toLocaleString('es-VE')}</div><div class="stat-card-lbl">insumos</div></div>
-      <div class="stat-card"><div class="stat-card-num">${store.categories.length.toLocaleString('es-VE')}</div><div class="stat-card-lbl">categorías</div></div>
-      <div class="stat-card ${criticos ? 'stat-card-crit' : 'stat-card-ok'}"><div class="stat-card-num">${criticos.toLocaleString('es-VE')}</div><div class="stat-card-lbl">bajo umbral</div></div>
-      <div class="stat-card stat-card-ok"><div class="stat-card-num">${s.unidades.toLocaleString('es-VE')}</div><div class="stat-card-lbl">unidades</div></div>
-    </div>`;
-}
+// Vestigial: Insumos ya no muestra un recuadro de estadísticas (ese
+// panorama vive en la pestaña Resumen) — solo la lista de productos. Se
+// mantiene exportada como no-op porque varios call-sites en app.js siguen
+// llamándola tras cada cambio de stock.
+export function renderTop() {}
 
 function _wireControls() {
   const q = _root.querySelector('#cnt-q');
