@@ -33,7 +33,6 @@ let _solicitante = null;              // { ci, name, surname }
 let _rows = [{ item: null, cantidad: null }];
 let _submitting = false;
 let _pendingOpId = null;              // client_op_id estable entre reintentos
-let _ubicacionNombre = null;
 let _solSugg = [];                    // últimos resultados de búsqueda de solicitante
 let _addingPersona = false;           // toggle del mini-form "+ Nueva persona"
 
@@ -96,7 +95,6 @@ function _resetState() {
 // resuelve el switcher mostrando/ocultando #qa-panel-egreso).
 export async function openEgreso() {
   _lastOnlineSeen = sync.online;
-  if (!_ubicacionNombre) _fetchUbicacionGenerica();
   _paint();
   setTimeout(() => _host?.querySelector('#eg-sol-search')?.focus(), 200);
 }
@@ -109,27 +107,6 @@ export function closeEgreso() {
   _onClose?.();
 }
 
-// Puramente cosmético (mostrar "Entregando desde: X"): la RPC
-// create_comanda_rapida resuelve el destino real del lado del servidor a la
-// ubicación marcada `es_default_egreso` (configurable por cada organización
-// en Ubicaciones — ya no un nombre hardcodeado tipo "UCV Centro de Acopio").
-async function _fetchUbicacionGenerica() {
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/ubicaciones_genericas_selectable?select=nombre&es_default_egreso=eq.true&limit=1`,
-      { headers: _headers() }
-    );
-    if (!res.ok) return;
-    const rows = await res.json();
-    _ubicacionNombre = Array.isArray(rows) && rows[0] ? rows[0].nombre : null;
-  } catch { /* cosmético — la RPC resuelve el destino real igual */ }
-  // Actualiza solo el subtítulo del header (sin _paint(): esto llega async
-  // justo después de abrir el panel, y un repintado completo en ese momento
-  // borraría cualquier tecla que el usuario ya haya escrito).
-  const sub = _host?.querySelector('.qa-sub');
-  if (sub && _ubicacionNombre) sub.textContent = `Entregando desde: ${_ubicacionNombre}`;
-}
-
 function _head() {
   return `
     <div class="qa-head eg-head">
@@ -138,7 +115,7 @@ function _head() {
       </div>
       <div>
         <div class="qa-title">Egreso Rápido</div>
-        <div class="qa-sub">${_ubicacionNombre ? `Entregando desde: ${escHtml(_ubicacionNombre)}` : 'Genera una comanda de entrega'}</div>
+        <div class="qa-sub">Genera una comanda de entrega</div>
       </div>
       <button class="qa-close-m eg-close" id="eg-close" aria-label="Cerrar">
         <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>

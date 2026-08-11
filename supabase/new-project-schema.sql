@@ -1148,10 +1148,12 @@ grant execute on function public.delete_count(text) to authenticated;
 --  no sirve para esto. Sin esta RPC, Egreso Rápido queda sin forma de
 --  descontar stock ni dejar rastro en la Bitácora. Portado del original
 --  (UCVInventario/supabase/2026-07-30-egreso-rapido-autorizado-por-fix.sql)
---  con 3 cambios: auth.uid() en vez de p_actor_ci, chequeo de categoría por
---  ítem (coordinador solo puede egresar de su propia categoría), y destino
---  resuelto por `ubicaciones.es_default_egreso` en vez del nombre
---  hardcodeado "UCV Centro de Acopio" (GBSInventario ya no es UCV-específico).
+--  con cambios: auth.uid() en vez de p_actor_ci, chequeo de categoría por
+--  ítem (coordinador solo puede egresar de su propia categoría), y sin
+--  destino/ubicación — el original resolvía uno vía `ubicaciones.
+--  es_default_egreso`; acá se desacopló por completo (2026-08-10, ver
+--  supabase/2026-08-10-egreso-sin-ubicacion.sql): la comanda solo registra
+--  solicitante, quién autorizó (creador), ítems+cantidad, id y fecha/hora.
 -- ══════════════════════════════════════════════════════════════════════════
 
 create or replace function public.create_comanda_rapida(
@@ -1163,7 +1165,6 @@ create or replace function public.create_comanda_rapida(
 language plpgsql security definer set search_path = public as $$
 declare
   v_role text; v_ci bigint; v_actor_nombre text; v_autorizado_por text;
-  v_ubicacion_id bigint; v_ubicacion_nombre text;
   v_comanda_id bigint; v_movement_id bigint;
   v_expected int; v_inserted int;
   v_pid bigint; v_pname text; v_punidad text; v_pcat bigint; v_qty int; v_disponible int;
@@ -1197,24 +1198,20 @@ begin
   select (name || ' ' || surname) into v_actor_nombre from public.persons where ci = v_ci;
   v_autorizado_por := v_actor_nombre || ' (Uso Interno)';
 
-  -- Destino SIEMPRE resuelto en el servidor (nunca aceptado del cliente).
-  select id, nombre into v_ubicacion_id, v_ubicacion_nombre
-    from public.ubicaciones
-   where es_default_egreso and deleted_at is null
-   limit 1;
-  if v_ubicacion_id is null then
-    raise exception 'No hay una ubicación marcada como destino por defecto de Egreso Rápido — un admin debe configurar una en Ubicaciones (es_default_egreso).';
-  end if;
-
+  -- Sin ubicación por ahora (desacoplado a propósito — este sistema todavía
+  -- no necesita registrar un destino/origen físico para el egreso, solo
+  -- solicitante, quién autorizó, ítems+cantidad, id y fecha/hora). Antes
+  -- exigía una fila en `ubicaciones` marcada es_default_egreso y fallaba
+  -- por completo sin ella; ubicacion_id queda NULL (columna ya nullable).
   insert into public.comandas (
     solicitante_ci, estudiante_resp_ci, responsable_entrega_ci,
     aprobado_por_ci, aprobado_por, created_by_ci, created_by,
-    ubicacion_id, fecha, hora_salida, hora_llegada,
+    fecha, hora_salida, hora_llegada,
     status, origen, processed_at, notas, client_op_id, autorizado_por
   ) values (
     p_solicitante_ci, v_ci, v_ci,
     v_ci, v_actor_nombre, v_ci, v_actor_nombre,
-    v_ubicacion_id, current_date, current_time, current_time,
+    current_date, current_time, current_time,
     'completada', 'rapida', now(), p_note, p_client_op_id, v_autorizado_por
   ) returning id into v_comanda_id;
 
@@ -1248,9 +1245,10 @@ begin
 
   -- movements.note SIEMPRE es el tag estructurado "Nombre - Área - Tipo"
   -- (acá, Tipo = 'Egreso') — p_note es texto libre del formulario, va aparte
-  -- en comandas.notas (arriba), nunca pisa este formato.
-  insert into public.movements (direction, destination, note, client_op_id, occurred_at, delivered_by)
-    values ('out', v_ubicacion_nombre, public.actor_note('Egreso'), p_client_op_id, now(), v_ci)
+  -- en comandas.notas (arriba), nunca pisa este formato. Sin destination por
+  -- el mismo motivo que ubicacion_id arriba (columna ya nullable).
+  insert into public.movements (direction, note, client_op_id, occurred_at, delivered_by)
+    values ('out', public.actor_note('Egreso'), p_client_op_id, now(), v_ci)
     returning id into v_movement_id;
 
   update public.comandas set movement_id = v_movement_id where id = v_comanda_id;
