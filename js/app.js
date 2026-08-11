@@ -74,16 +74,18 @@ async function nav(page) {
 }
 
 function applyRBAC() {
-  // Quien llega al app-shell ya pasó el filtro de checkAuth(): solo admin y
-  // coordinador con acceso a esta plataforma llegan hasta acá, y ambos ven
-  // las pestañas completas — voluntarios.js decide internamente que
-  // "Gestión de Accesos" es admin-only (un coordinador ve un mensaje en vez
-  // del hub), no hace falta ocultar la pestaña entera por rol.
   document.querySelectorAll('.tn-item, .mbn-item').forEach(el => { el.style.display = ''; });
   const authBtn = document.getElementById('auth-btn');
   const authBtnM = document.getElementById('auth-btn-m');
   if (authBtn) authBtn.style.display = '';
   if (authBtnM) authBtnM.style.display = '';
+
+  // "Usuarios" (Gestión de Accesos) es admin-only del lado del servidor
+  // (voluntarios.js#renderVoluntarios ya mostraba un mensaje en vez del hub
+  // para cualquier otra cuenta) — se oculta también la pestaña entera acá,
+  // ya que dejarla visible sin uso real solo genera confusión.
+  document.querySelectorAll('.tn-item[data-page="voluntarios"], .mbn-item[data-page="voluntarios"]')
+    .forEach(el => { el.style.display = auth.isAdmin() ? '' : 'none'; });
 
   // El coordinador del área "General" solo consulta el inventario (nunca lo
   // modifica, ver auth.js#canEditInventory()): la pestaña "Ingreso Rápido"

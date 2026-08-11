@@ -4,22 +4,21 @@
 // admin_reset_password (RPCs de person_credentials, tabla que dejó de
 // existir — ver supabase/new-project-schema.sql). El modelo nuevo separa
 // dos cosas que antes eran un solo paso:
-//   1. Crear una PERSONA (create_person, RPC normal) — cualquier admin o
-//      coordinador puede hacerlo, y una persona así creada NO tiene acceso
-//      al sistema (ver egresorapido.js#_crearPersonaRapida, mismo caso de
-//      uso: un solicitante que no necesita loguearse).
+//   1. Datos de la PERSONA en sí (nombre/apellido/teléfono/cédula) —
+//      create_person/admin_update_person, RPCs normales, sin necesitar la
+//      Admin API (son columnas de `persons`, cubiertas por RLS).
 //   2. Otorgar/editar/revocar el ACCESO de una persona (crear su cuenta de
-//      Auth, fijar rol/área, resetear contraseña) — exige la Admin API
-//      (service_role key), así que vive en la Edge Function
+//      Auth, fijar rol/área/correo, resetear contraseña) — exige la Admin
+//      API (service_role key), así que vive en la Edge Function
 //      (supabase/functions/manage-users), nunca en una RPC alcanzable con
 //      la sola anon/authenticated key.
 //
-// Esta pestaña se dedica por completo al paso 2 y es exclusiva de admin —
-// "otorgar acceso" es la operación más sensible de todo el sistema (crea
-// una cuenta con rol real), coherente con que el resto de la gestión de
-// categorías/productos también quedó admin-only (ver views/admin.js).
-// Un coordinador que necesite registrar una persona SIN acceso (p.ej. un
-// solicitante) ya lo puede hacer desde Egreso Rápido → "+ Nueva persona".
+// Esta pestaña es exclusiva de admin — "otorgar acceso" es la operación más
+// sensible de todo el sistema (crea una cuenta con rol real), coherente con
+// que el resto de la gestión de categorías/productos también quedó
+// admin-only (ver views/admin.js). La pestaña "Usuarios" del nav ya se
+// oculta entera para cualquier otra cuenta (ver app.js#applyRBAC), pero
+// este mensaje se conserva como respaldo por si se llega acá de otra forma.
 
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
@@ -79,7 +78,7 @@ export function renderVoluntarios(container) {
     container.innerHTML = `
       <div class="reg-wrap"><div class="reg-empty">
         <div class="reg-empty-t">Solo para administradores</div>
-        <div class="reg-empty-s">Si necesitas registrar una persona sin acceso al sistema (p.ej. un solicitante), usa "+ Nueva persona" desde Egreso Rápido.</div>
+        <div class="reg-empty-s">La gestión de accesos es exclusiva del administrador del sistema.</div>
       </div></div>`;
     return;
   }
@@ -146,10 +145,39 @@ export function renderVoluntarios(container) {
 
     <div id="vol-edit-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999; justify-content:center; align-items:center;">
       <div style="background:var(--bg); padding:20px; border-radius:8px; width:90%; max-width:420px; border:1px solid var(--bdr); max-height:90vh; overflow-y:auto;">
-        <h3 style="margin-top:0;">Editar acceso</h3>
-        <div style="margin-bottom:12px; font-size:12px; color:var(--t4);" id="vol-edit-name"></div>
+        <h3 style="margin-top:0;">Editar usuario</h3>
         <form id="vol-edit-form" style="display:flex; flex-direction:column; gap:12px;">
           <input type="hidden" id="vol-edit-ci">
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <div class="adm-field" style="flex:1; min-width:140px;">
+              <label>Cédula</label>
+              <input type="number" id="vol-edit-cedula" required placeholder="Ej. 20123456">
+            </div>
+            <div class="adm-field" style="flex:1; min-width:140px;">
+              <label>Nombre</label>
+              <input type="text" id="vol-edit-nombre" required placeholder="Nombre">
+            </div>
+            <div class="adm-field" style="flex:1; min-width:140px;">
+              <label>Apellido</label>
+              <input type="text" id="vol-edit-apellido" required placeholder="Apellido">
+            </div>
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <div class="adm-field" style="width:100px;">
+              <label>Cód.</label>
+              <select id="vol-edit-cod" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
+                ${PHONE_PREFIXES.map(p => `<option value="${p}">${p}</option>`).join('')}
+              </select>
+            </div>
+            <div class="adm-field" style="flex:1;">
+              <label>Teléfono (7 dígitos)</label>
+              <input type="text" id="vol-edit-telf" required pattern="^[0-9]{7}$" placeholder="1234567">
+            </div>
+          </div>
+          <div class="adm-field">
+            <label>Correo electrónico</label>
+            <input type="email" id="vol-edit-email" required placeholder="correo@ejemplo.com">
+          </div>
           <div class="adm-field">
             <label>Área</label>
             <select id="vol-edit-area" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
@@ -214,13 +242,30 @@ export function renderVoluntarios(container) {
     btn.disabled = true; btn.textContent = 'Guardando…';
     try {
       const ci = parseInt(container.querySelector('#vol-edit-ci').value, 10);
+      const nuevaCi = parseInt(container.querySelector('#vol-edit-cedula').value, 10);
+      const nombre = container.querySelector('#vol-edit-nombre').value.trim();
+      const apellido = container.querySelector('#vol-edit-apellido').value.trim();
+      const phoneCode = container.querySelector('#vol-edit-cod').value;
+      const phoneNum = container.querySelector('#vol-edit-telf').value.trim();
+      const email = container.querySelector('#vol-edit-email').value.trim();
       const area = container.querySelector('#vol-edit-area').value;
       const nuevaPass = container.querySelector('#vol-edit-pass').value;
 
-      await _edgeFn('update_area', { ci, area });
-      if (nuevaPass) await _edgeFn('reset_password', { ci, new_password: nuevaPass });
+      // Paso 1: datos de la persona (RPC normal — nombre/apellido/teléfono/
+      // cédula son columnas de `persons`, no necesitan la Admin API).
+      await _rpc('admin_update_person', {
+        p_ci: ci, p_new_ci: nuevaCi, p_name: nombre, p_surname: apellido,
+        p_phone_company_code: phoneCode, p_phone_number: phoneNum,
+      });
 
-      toast.ok('Acceso actualizado.');
+      // Paso 2: lo que sí vive en auth.users / necesita la Admin API — a
+      // partir de acá se usa la cédula NUEVA (admin_update_person ya migró
+      // la fila si cambió).
+      await _edgeFn('update_email', { ci: nuevaCi, email });
+      await _edgeFn('update_area', { ci: nuevaCi, area });
+      if (nuevaPass) await _edgeFn('reset_password', { ci: nuevaCi, new_password: nuevaPass });
+
+      toast.ok('Usuario actualizado.');
       container.querySelector('#vol-edit-modal').style.display = 'none';
       await loadVolunteers(container);
     } catch (err) {
@@ -235,7 +280,12 @@ export function renderVoluntarios(container) {
     const v = _lastUsers.find(u => u.ci === ci);
     if (!v) return;
     container.querySelector('#vol-edit-ci').value = v.ci;
-    container.querySelector('#vol-edit-name').textContent = `${v.name} ${v.surname} · CI: ${v.ci}`;
+    container.querySelector('#vol-edit-cedula').value = v.ci;
+    container.querySelector('#vol-edit-nombre').value = v.name || '';
+    container.querySelector('#vol-edit-apellido').value = v.surname || '';
+    container.querySelector('#vol-edit-cod').value = v.phone_company_code || PHONE_PREFIXES[0];
+    container.querySelector('#vol-edit-telf').value = v.phone_number || '';
+    container.querySelector('#vol-edit-email').value = v.email || '';
     container.querySelector('#vol-edit-area').value = v.area || 'general';
     container.querySelector('#vol-edit-pass').value = '';
     container.querySelector('#vol-edit-modal').style.display = 'flex';

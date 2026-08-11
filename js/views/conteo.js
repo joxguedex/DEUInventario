@@ -76,6 +76,12 @@ export function renderTop() {}
 function _paintTabs() {
   const box = _root?.querySelector('#cnt-tabs');
   if (!box) return;
+  // Un coordinador de área ya solo ve (y solo puede ver, ver
+  // store.js#visibleItems) los insumos de su propia categoría — el
+  // selector "Todos | Mi categoría" no filtra nada de verdad, así que se
+  // oculta entero en vez de mostrar una sola pestaña sin uso real.
+  if (auth.isCoordinador() && !auth.isGeneral()) { box.style.display = 'none'; return; }
+  box.style.display = '';
   const cats = _tabCats();
   box.innerHTML = `
     <div class="tab ${_cat === 'todos' ? 'active' : ''}" data-cat="todos">Todos</div>

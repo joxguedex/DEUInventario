@@ -98,6 +98,7 @@ Deno.serve(async (req: Request) => {
     switch (action) {
       case 'grant_login':      return await grantLogin(body);
       case 'update_area':      return await updateArea(body);
+      case 'update_email':     return await updateEmail(body);
       case 'revoke_access':    return await revokeAccess(body);
       case 'revoke_by_area':   return await revokeByArea(body);
       case 'reset_password':   return await resetPassword(body);
@@ -173,6 +174,32 @@ async function updateArea(body: Record<string, unknown>) {
   const { error } = await admin.auth.admin.updateUserById(authUserId, {
     app_metadata: { role, area },
   });
+  if (error) throw error;
+  return json({ ok: true });
+}
+
+// ── update_email — edita el correo de un usuario ya con login ────────────
+// El correo vive en auth.users, no en `persons` — por eso esto NO puede
+// resolverse con la RPC admin_update_person (nombre/apellido/teléfono/
+// cédula, todos columnas de `persons`) y necesita la Admin API, igual que
+// grant_login/reset_password. email_confirm:true evita el correo de
+// verificación (mismo criterio que grant_login: el admin ya validó la
+// identidad al editar el usuario, no hace falta que la persona confirme).
+async function updateEmail(body: Record<string, unknown>) {
+  const ci = Number(body.ci);
+  const email = body.email;
+  if (!ci) return json({ error: 'Cédula inválida.' }, 400);
+  if (!isEmail(email)) return json({ error: 'Correo inválido.' }, 400);
+
+  const authUserId = await _authUserIdFor(ci);
+  if (!authUserId) return json({ error: 'Esa persona no tiene inicio de sesión.' }, 404);
+
+  const { data: u } = await admin.auth.admin.getUserById(authUserId);
+  if ((u?.user?.app_metadata as Record<string, unknown> | undefined)?.role === 'admin') {
+    return json({ error: 'No se puede editar el correo de un admin desde acá.' }, 403);
+  }
+
+  const { error } = await admin.auth.admin.updateUserById(authUserId, { email, email_confirm: true });
   if (error) throw error;
   return json({ ok: true });
 }
