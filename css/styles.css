@@ -15,6 +15,13 @@
   --amber: var(--brand-primary);
   --amber-d: color-mix(in srgb, var(--brand-primary) 80%, black);
   --amber-bg: color-mix(in srgb, var(--brand-primary) 15%, white);
+  /* Derivadas extra para los tintes decorativos puntuales (antes rgba(245,158,11,X)
+     y #FDE68A fijos, esparcidos por todo el archivo) — con esto TODO tinte que usa
+     el color principal, sin excepción, sigue a --brand-primary. */
+  --amber-ink: color-mix(in srgb, var(--brand-primary) 14%, black);      /* texto legible sobre fondo var(--amber) (botones, FAB) */
+  --amber-border-lt: color-mix(in srgb, var(--brand-primary) 42%, white); /* borde claro de recuadros de aviso */
+  /* Fondo de overlays de modal (antes rgba(17,24,39,.55) fijo) — sigue a --brand-secondary. */
+  --overlay: color-mix(in srgb, var(--brand-secondary) 55%, transparent);
   --red:#EF4444; --red-bg:#FEF2F2; --green:#10B981; --grn-bg:#ECFDF5; --teal:#0F766E; --blue:#6366F1; --blu-bg:#EEF2FF;
   --t1:#111827; --t2:#374151; --t3:#6B7280; --t4:#9CA3AF; --bdr:#E5E7EB;
   --sh:0 1px 3px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.04);
@@ -30,7 +37,7 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
 input[type=number]{-moz-appearance:textfield}
 
 /* radar (statusbar) */
-.r-dot{width:6px;height:6px;background:var(--amber);border-radius:50%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(245,158,11,.5)}
+.r-dot{width:6px;height:6px;background:var(--amber);border-radius:50%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);box-shadow:0 0 6px color-mix(in srgb, var(--amber) 50%, transparent)}
 .r-ring{position:absolute;top:50%;left:50%;border-radius:50%;border:1.5px solid var(--amber);animation:radar 2.8s ease-out infinite;transform:translate(-50%,-50%)}
 .r-ring:nth-child(3){animation-delay:1.4s}
 @keyframes radar{0%{width:6px;height:6px;opacity:.9}100%{width:22px;height:22px;opacity:0}}
@@ -43,10 +50,18 @@ input[type=number]{-moz-appearance:textfield}
 }
 .tn-brand{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:#fff;letter-spacing:-.5px;flex-shrink:0;margin-right:22px}
 .tn-brand .tn-brand-rest{color:var(--amber)}
+/* Insignia de versión (topnav + topbar móvil) — chip blanco translúcido, igual
+   tratamiento que .sync-pill/.auth-btn: independiente del color de marca, así
+   que siempre contrasta sobre el fondo oscuro de ambas barras sin importar qué
+   --brand-secondary se elija. Antes tenía estilos inline hardcodeados
+   (background:black/gray/var(--s2), color:white/var(--bdr)...) que se rompían
+   cada vez que se tocaba la paleta — de ahí el historial de commits
+   "Corrección version-badge" — reemplazados por esta única clase. */
+.version-badge{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.2px;margin-left:4px;vertical-align:middle;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);color:rgba(255,255,255,.65)}
 .tn-nav{display:flex;align-items:center;gap:2px;flex:1}
 .tn-item{padding:8px 14px;border-radius:var(--r-sm);color:rgba(255,255,255,.45);font-family:'Space Grotesk',sans-serif;font-size:13.5px;font-weight:500;white-space:nowrap;transition:all .14s;position:relative}
 .tn-item:hover{background:rgba(255,255,255,.06);color:rgba(255,255,255,.85)}
-.tn-item.active{color:var(--amber);background:rgba(245,158,11,.1)}
+.tn-item.active{color:var(--amber);background:color-mix(in srgb, var(--amber) 10%, transparent)}
 .tn-item.active::after{content:'';position:absolute;bottom:-1px;left:10px;right:10px;height:2px;background:var(--amber);border-radius:2px 2px 0 0}
 
 /* Despachos: sin uso real con el estado actual del sistema — oculta para
@@ -72,7 +87,7 @@ input[type=number]{-moz-appearance:textfield}
 .sync-pill{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);flex-shrink:0;user-select:none}
 .sync-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.7}
 .sync-pill.ok{background:rgba(16,185,129,.15);border-color:rgba(16,185,129,.35);color:#6ee7b7}
-.sync-pill.pending{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.35);color:var(--amber)}
+.sync-pill.pending{background:color-mix(in srgb, var(--amber) 15%, transparent);border-color:color-mix(in srgb, var(--amber) 35%, transparent);color:var(--amber)}
 .sync-pill.pending .sync-dot{animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 /* pill sobre fondo claro (m-topbar usa dark, así que queda igual) */
@@ -81,11 +96,11 @@ input[type=number]{-moz-appearance:textfield}
 .tn-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
 .auth-btn{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--r-sm);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.6);font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;flex-shrink:0}
 .auth-btn:hover{background:rgba(255,255,255,.12);color:rgba(255,255,255,.9)}
-.auth-btn.on{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.4);color:var(--amber)}
+.auth-btn.on{background:color-mix(in srgb, var(--amber) 16%, transparent);border-color:color-mix(in srgb, var(--amber) 40%, transparent);color:var(--amber)}
 .m-topbar .auth-btn{padding:6px 9px}
 
 /* ── Modal coordinador ── */
-.adm-ov{position:fixed;inset:0;z-index:100;background:rgba(17,24,39,.55);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px}
+.adm-ov{position:fixed;inset:0;z-index:100;background:var(--overlay);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px}
 .adm-ov.open{display:flex}
 /* Modal de confirmación (components/confirm.js) — puede dispararse desde
    DENTRO de otro modal ya abierto (p.ej. "Eliminar" en Editar insumo);
@@ -98,11 +113,11 @@ input[type=number]{-moz-appearance:textfield}
 .adm-sub{font-size:12px;color:var(--t3);margin-top:2px}
 .adm-x{width:30px;height:30px;border-radius:50%;font-size:22px;line-height:1;color:var(--t4);background:var(--s2);flex-shrink:0}
 .adm-x:hover{background:var(--bdr);color:var(--t1)}
-.adm-warn{font-size:12.5px;line-height:1.5;color:var(--amber-d);background:var(--amber-bg);border:1px solid #FDE68A;border-radius:var(--r-sm);padding:10px 12px;margin-bottom:14px}
+.adm-warn{font-size:12.5px;line-height:1.5;color:var(--amber-d);background:var(--amber-bg);border:1px solid var(--amber-border-lt);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:14px}
 .adm-field{margin-bottom:12px}
 .adm-field label{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--t4);margin-bottom:5px}
 .adm-field input,.adm-field select{width:100%;padding:12px 14px;border:1.5px solid var(--bdr);border-radius:var(--r-sm);font-size:15px;background:var(--s2);color:var(--t1)}
-.adm-field input:focus,.adm-field select:focus{outline:none;border-color:var(--amber);background:#fff;box-shadow:0 0 0 3px rgba(245,158,11,.12)}
+.adm-field input:focus,.adm-field select:focus{outline:none;border-color:var(--amber);background:#fff;box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 12%, transparent)}
 .adm-field input:disabled,.adm-field select:disabled{opacity:.5}
 .adm-field-row{display:flex;gap:10px}
 .adm-field-row .adm-field{flex:1;min-width:0}
@@ -152,10 +167,10 @@ input[type=number]{-moz-appearance:textfield}
 .qa-switcher{display:flex;gap:6px;padding:3px;margin-bottom:14px;background:rgba(255,255,255,.06);border-radius:var(--r-sm);flex-shrink:0}
 .qa-switch-btn{flex:1;padding:9px 10px;border-radius:calc(var(--r-sm) - 3px);font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;text-align:center;color:rgba(255,255,255,.5);transition:background .15s,color .15s}
 .qa-switch-btn:hover{color:rgba(255,255,255,.8)}
-.qa-switch-btn.active{background:var(--amber);color:#1a1205}
+.qa-switch-btn.active{background:var(--amber);color:var(--amber-ink)}
 .qa-switch-btn[data-mode="egreso"].active{background:var(--red);color:#fff}
 .qa-head{display:flex;align-items:center;gap:11px;padding-bottom:13px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}
-.qa-head-icon{width:32px;height:32px;border-radius:9px;flex-shrink:0;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.28);display:flex;align-items:center;justify-content:center;color:var(--amber)}
+.qa-head-icon{width:32px;height:32px;border-radius:9px;flex-shrink:0;background:color-mix(in srgb, var(--amber) 15%, transparent);border:1px solid color-mix(in srgb, var(--amber) 28%, transparent);display:flex;align-items:center;justify-content:center;color:var(--amber)}
 .qa-title{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:rgba(255,255,255,.92);line-height:1.2}
 .qa-sub{font-size:10.5px;color:rgba(255,255,255,.3);margin-top:2px;letter-spacing:.2px}
 .qa-close-m{display:none;margin-left:auto;width:32px;height:32px;border-radius:50%;color:rgba(255,255,255,.5);background:rgba(255,255,255,.06);align-items:center;justify-content:center;flex-shrink:0}
@@ -170,7 +185,7 @@ input[type=number]{-moz-appearance:textfield}
 .qa-search-ico{position:absolute;left:13px;color:rgba(255,255,255,.35);pointer-events:none}
 #qa-search{width:100%;padding:14px 14px 14px 38px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.12);color:#fff;font-size:16px}
 #qa-search::placeholder{color:rgba(255,255,255,.34)}
-#qa-search:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+#qa-search:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent)}
 .qa-sugg{margin-top:8px;display:flex;flex-direction:column;gap:2px;max-height:44vh;overflow-y:auto}
 .qa-sugg-item,.qa-sugg-new{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;text-align:left;border-radius:var(--r-sm);font-size:13.5px;color:rgba(255,255,255,.85)}
 .qa-sugg-item:hover,.qa-sugg-new:hover{background:rgba(255,255,255,.08)}
@@ -196,7 +211,7 @@ input[type=number]{-moz-appearance:textfield}
 .qa-delta-wrap{position:relative}
 .qa-delta-inp{width:100%;padding:16px 14px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:22px;font-weight:600;font-family:'Space Grotesk',sans-serif;text-align:center;transition:border-color .15s,box-shadow .15s}
 .qa-delta-inp::placeholder{color:rgba(255,255,255,.25);font-size:15px;font-weight:400;font-family:'Inter',sans-serif}
-.qa-delta-inp:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.qa-delta-inp:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent)}
 @keyframes qa-shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 .qa-shake{animation:qa-shake .35s ease;border-color:var(--red)!important;box-shadow:0 0 0 3px rgba(239,68,68,.2)!important}
 
@@ -209,14 +224,14 @@ input[type=number]{-moz-appearance:textfield}
 .qa-btn-sub{background:rgba(239,68,68,.15);color:#fca5a5;border:1.5px solid rgba(239,68,68,.35)}
 .qa-btn-sub:hover{background:rgba(239,68,68,.28)}
 
-.qa-add-btn{width:100%;padding:16px 22px;border-radius:var(--r-sm);background:var(--amber);color:#1a1205;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px;box-shadow:0 2px 14px rgba(245,158,11,.35);transition:background .13s,transform .1s}
+.qa-add-btn{width:100%;padding:16px 22px;border-radius:var(--r-sm);background:var(--amber);color:var(--amber-ink);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px;box-shadow:0 2px 14px color-mix(in srgb, var(--amber) 35%, transparent);transition:background .13s,transform .1s}
 .qa-add-btn:hover{background:#fbbf24}
 .qa-add-btn:active{transform:scale(.98)}
 .qa-new .qa-add-btn{width:100%}
 /* input de cantidad en modo "crear nuevo insumo" */
 .qa-new .qa-qty{width:100%;padding:14px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:18px;font-weight:600;font-family:'JetBrains Mono',monospace;text-align:center}
 .qa-new .qa-qty::placeholder{color:rgba(255,255,255,.3);font-family:'Inter',sans-serif;font-size:14px;font-weight:400}
-.qa-new .qa-qty:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px rgba(245,158,11,.18)}
+.qa-new .qa-qty:focus{outline:none;border-color:var(--amber);background:rgba(255,255,255,.12);box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent)}
 .qa-link{align-self:flex-start;font-size:12px;color:rgba(255,255,255,.4);padding:4px 0}
 .qa-link:hover{color:rgba(255,255,255,.7)}
 .qa-new{display:flex;flex-direction:column;gap:10px}
@@ -229,9 +244,9 @@ input[type=number]{-moz-appearance:textfield}
 
 .qa-foot{margin-top:14px;padding-top:13px;border-top:1px solid rgba(255,255,255,.08)}
 .qa-foot-user{display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(255,255,255,.05);border-radius:var(--r-sm);border:1px solid rgba(255,255,255,.08)}
-.qa-foot-ico{width:28px;height:28px;border-radius:50%;background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.25);display:flex;align-items:center;justify-content:center;color:var(--amber);flex-shrink:0}
+.qa-foot-ico{width:28px;height:28px;border-radius:50%;background:color-mix(in srgb, var(--amber) 15%, transparent);border:1px solid color-mix(in srgb, var(--amber) 25%, transparent);display:flex;align-items:center;justify-content:center;color:var(--amber);flex-shrink:0}
 .qa-foot-name{flex:1;font-family:'Space Grotesk',sans-serif;font-size:13.5px;font-weight:600;color:rgba(255,255,255,.85);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.qa-foot-badge{font-size:9.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--amber);background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);padding:2px 7px;border-radius:20px;flex-shrink:0}
+.qa-foot-badge{font-size:9.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--amber);background:color-mix(in srgb, var(--amber) 12%, transparent);border:1px solid color-mix(in srgb, var(--amber) 25%, transparent);padding:2px 7px;border-radius:20px;flex-shrink:0}
 
 /* ═══ CONTEO ═══ */
 .cnt-wrap{max-width:920px;margin:0 auto}
@@ -248,7 +263,7 @@ input[type=number]{-moz-appearance:textfield}
 .cnt-fbtn:hover{color:var(--t1)}
 .cnt-fbtn.active{background:var(--sidebar);color:#fff}
 
-.cnt-hint{font-size:12.5px;color:var(--t3);margin:-2px 0 12px;padding:9px 13px;background:var(--amber-bg);border:1px solid #FDE68A;border-radius:var(--r-sm);line-height:1.4}
+.cnt-hint{font-size:12.5px;color:var(--t3);margin:-2px 0 12px;padding:9px 13px;background:var(--amber-bg);border:1px solid var(--amber-border-lt);border-radius:var(--r-sm);line-height:1.4}
 .cnt-hint strong{color:var(--amber-d);font-weight:600}
 
 /* ── BÚSQUEDA + PESTAÑAS DE CATEGORÍA — Insumos ─────────────────────────
@@ -450,33 +465,9 @@ input[type=number]{-moz-appearance:textfield}
 .eg-section{display:flex;flex-direction:column;gap:6px}
 .eg-label{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.4)}
 
-.eg-sol-chip{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.14);border-radius:var(--r-sm)}
-.eg-sol-name{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13.5px;color:#fff}
-.eg-x{width:24px;height:24px;border-radius:50%;color:rgba(255,255,255,.5);background:rgba(255,255,255,.08);flex-shrink:0}
-.eg-x:hover{background:rgba(255,255,255,.16);color:#fff}
-
-.eg-sol-row{display:flex;gap:6px;align-items:center}
-.eg-sol-searchbox{flex:1;min-width:0}
-.eg-add-persona-btn{width:38px;height:38px;flex-shrink:0;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:rgba(255,255,255,.7);font-size:18px;line-height:1}
-.eg-add-persona-btn:hover{background:rgba(255,255,255,.14);color:#fff}
-
-/* Nueva persona: ocupa TODO el cuerpo de Egreso Rápido mientras está
-   activa (ver egresorapido.js#_body — Solicitante/Ítems/Confirmar se
-   ocultan por completo), así que no necesita destacarse con un
-   recuadro/borde propio — ya es el único contenido visible. */
-.eg-persona-form{display:flex;flex-direction:column;gap:6px}
-.eg-persona-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:2px}
-.eg-persona-title{font-size:11px;font-weight:700;letter-spacing:.3px;color:rgba(255,255,255,.45);text-transform:uppercase}
-.eg-persona-row{display:flex;gap:6px}
-.eg-persona-row>*{flex:1;min-width:0}
 .eg-input{width:100%;min-width:0;padding:9px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:13px}
 .eg-input::placeholder{color:rgba(255,255,255,.3)}
 .eg-input:focus{outline:none;border-color:#fca5a5;box-shadow:0 0 0 3px rgba(239,68,68,.18)}
-.eg-persona-tel-sel{flex:0 0 76px}
-.eg-persona-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:4px}
-.eg-persona-save{flex-shrink:0;padding:9px 14px;border-radius:var(--r-sm);background:var(--red);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12.5px}
-.eg-persona-save:hover{filter:brightness(1.1)}
-.eg-persona-save:disabled{opacity:.5}
 
 .eg-searchbox{position:relative}
 .eg-searchbox input,.eg-row-input{width:100%;padding:10px 12px;border-radius:var(--r-sm);background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14);color:#fff;font-size:13.5px}
@@ -532,7 +523,7 @@ input[type=number]{-moz-appearance:textfield}
   .mbn-item.active{color:#fff;background:var(--amber)}
 
   /* FAB */
-  .fab{display:flex;position:fixed;right:16px;bottom:calc(74px + env(safe-area-inset-bottom));z-index:35;width:56px;height:56px;border-radius:50%;background:var(--amber);color:#1a1205;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(245,158,11,.45)}
+  .fab{display:flex;position:fixed;right:16px;bottom:calc(74px + env(safe-area-inset-bottom));z-index:35;width:56px;height:56px;border-radius:50%;background:var(--amber);color:var(--amber-ink);align-items:center;justify-content:center;box-shadow:0 6px 20px color-mix(in srgb, var(--amber) 45%, transparent)}
   .fab:active{transform:scale(.94)}
 
   /* quick-add como hoja inferior — un solo FAB abre la hoja; Ingreso/Egreso se alternan adentro con .qa-switcher */
@@ -677,7 +668,7 @@ input[type=number]{-moz-appearance:textfield}
   font-size:13px;color:var(--t1);background:#fff;outline:none;
   transition:border-color .14s,box-shadow .14s;
 }
-.form-i:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(245,158,11,.12)}
+.form-i:focus{border-color:var(--amber);box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 12%, transparent)}
 select.form-i{
   appearance:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%239CA3AF'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z'/%3E%3C/svg%3E");
@@ -730,8 +721,8 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 
 .ing-diary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
 .ing-diary-card{background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r);padding:20px;box-shadow:var(--sh);cursor:pointer;transition:border-color .15s,transform .12s,box-shadow .15s}
-.ing-diary-card:hover{border-color:rgba(245,158,11,.4);transform:translateY(-2px);box-shadow:var(--sh-md)}
-.ing-diary-card-today{border-color:rgba(245,158,11,.35);background:var(--amber-bg)}
+.ing-diary-card:hover{border-color:color-mix(in srgb, var(--amber) 40%, transparent);transform:translateY(-2px);box-shadow:var(--sh-md)}
+.ing-diary-card-today{border-color:color-mix(in srgb, var(--amber) 35%, transparent);background:var(--amber-bg)}
 
 .idc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
 .idc-dayname{font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t4);display:flex;align-items:center;gap:6px;margin-bottom:2px}
@@ -749,14 +740,14 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .idc-foot{font-size:11px;color:var(--amber-d);font-weight:600;text-align:right}
 
 .ing-day-badge{display:inline-block;padding:1px 7px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
-.ing-day-badge-today{background:var(--amber-bg);color:var(--amber-d);border:1px solid rgba(245,158,11,.35)}
+.ing-day-badge-today{background:var(--amber-bg);color:var(--amber-d);border:1px solid color-mix(in srgb, var(--amber) 35%, transparent)}
 .ing-day-badge-ayer{background:var(--blu-bg);color:var(--blue);border:1px solid rgba(99,102,241,.3)}
 
 /* Modal de detalle del día — tema claro, igual que .adm-box */
 .idm-box{background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r-xl);width:min(94vw,960px);max-height:92vh;display:flex;flex-direction:column;box-shadow:var(--sh-lg);overflow:hidden}
 .idm-hero{display:flex;align-items:flex-start;justify-content:space-between;padding:24px 24px 20px;background:var(--amber-bg);border-bottom:1px solid var(--bdr);flex-shrink:0}
 .idm-hero-day{font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t4);display:flex;align-items:center;gap:8px;margin-bottom:4px}
-.idm-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.4px;background:#fff;color:var(--amber-d);border:1px solid rgba(245,158,11,.4)}
+.idm-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.4px;background:#fff;color:var(--amber-d);border:1px solid color-mix(in srgb, var(--amber) 40%, transparent)}
 .idm-hero-date{font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:800;color:var(--t1);line-height:1.1;margin-bottom:10px}
 .idm-hero-cats{display:flex;flex-wrap:wrap;gap:5px}
 .idm-cat-pill{font-size:10px;font-weight:600;padding:2px 9px;border-radius:20px;border:1px solid transparent}
@@ -778,7 +769,7 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .idm-section-title{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--t4);margin-bottom:12px}
 .idm-bars{display:flex;flex-direction:column;gap:10px}
 .idm-bar-row{display:flex;align-items:center;gap:10px}
-.idm-bar-rank{width:20px;height:20px;border-radius:50%;flex-shrink:0;background:var(--amber-bg);border:1px solid rgba(245,158,11,.3);font-family:'Space Grotesk',sans-serif;font-size:9px;font-weight:700;color:var(--amber-d);display:flex;align-items:center;justify-content:center}
+.idm-bar-rank{width:20px;height:20px;border-radius:50%;flex-shrink:0;background:var(--amber-bg);border:1px solid color-mix(in srgb, var(--amber) 30%, transparent);font-family:'Space Grotesk',sans-serif;font-size:9px;font-weight:700;color:var(--amber-d);display:flex;align-items:center;justify-content:center}
 .idm-bar-info{flex:1;min-width:0}
 .idm-bar-name{font-size:13px;font-weight:600;color:var(--t2);margin-bottom:5px;line-height:1.35}
 .idm-bar-track{height:5px;background:var(--s2);border-radius:3px;overflow:hidden}

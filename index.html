@@ -3,12 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<!-- El <title> y el nombre en pantalla se sobrescriben en el arranque desde
-     js/branding.js — lo de acá es solo el valor por defecto antes de que
-     corra el JS. apple-mobile-web-app-title y manifest.json SÍ hay que
-     editarlos a mano al rebrandear (ver comentario en branding.js). -->
+<!-- El <title>, el nombre en pantalla y el color de la barra del navegador
+     (theme-color) se sobrescriben en el arranque desde js/branding.js y
+     css/styles.css#--brand-secondary — lo de acá es solo el valor por
+     defecto antes de que corra el JS. apple-mobile-web-app-title,
+     manifest.json e icon.svg SÍ hay que editarlos a mano al rebrandear (son
+     estáticos, leídos por el navegador/SO antes de que exista una página —
+     ver comentario en branding.js). -->
 <title>GBSInventario — Gestión de Inventario</title>
-<meta name="theme-color" content="#111827">
+<meta name="theme-color" content="#111827" id="theme-color-meta">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -35,12 +38,13 @@
 
 <!-- ═══ Top nav (desktop) ═══ -->
 <header class="topnav">
-  <div class="tn-brand"><span id="brand-bold">GBS</span><span class="tn-brand-rest" id="brand-rest">Inventario</span> <span id="version-badge" style="font-size:10px; opacity:1; margin-left:4px; font-weight:normal; vertical-align:middle; background:gray; padding:2px 6px; border-radius:4px; border:1px solid var(--bdr); color: white;"></span></div>
+  <div class="tn-brand"><span id="brand-bold">GBS</span><span class="tn-brand-rest" id="brand-rest">Inventario</span> <span id="version-badge" class="version-badge"></span></div>
   <nav class="tn-nav">
-    <button class="tn-item" data-page="resumen">Resumen</button>
-    <button class="tn-item active" data-page="conteo">Insumos</button>
+    <button class="tn-item active" data-page="resumen">Resumen</button>
+    <button class="tn-item" data-page="conteo">Insumos</button>
     <button class="tn-item" data-page="registro">Bitácora</button>
     <button class="tn-item" data-page="ingresos">Ingresos</button>
+    <button class="tn-item" data-page="egresos">Egresos</button>
     <button class="tn-item" data-page="despachos">Despachos<span id="dsp-badge-desktop" style="display:none;margin-left:6px;min-width:16px;height:16px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span></button>
     <button class="tn-item" data-page="comunicados">Comunicados<span class="nav-badge" id="nb-comms" style="display:none">0</span></button>
     <button class="tn-item" data-page="voluntarios">Usuarios</button>
@@ -58,7 +62,7 @@
 
 <!-- ═══ Topbar (móvil) ═══ -->
 <div class="m-topbar">
-  <span class="m-brand"><span id="brand-bold-m">GBS</span><span class="m-brand-rest" id="brand-rest-m">Inventario</span> <span id="version-badge-m" style="font-size:10px; opacity:0.5; margin-left:4px; font-weight:normal; vertical-align:middle; background:var(--s2); padding:2px 6px; border-radius:4px; border:1px solid var(--bdr);"></span></span>
+  <span class="m-brand"><span id="brand-bold-m">GBS</span><span class="m-brand-rest" id="brand-rest-m">Inventario</span> <span id="version-badge-m" class="version-badge"></span></span>
   <div style="display:flex;align-items:center;gap:8px">
     <div class="sync-pill local" id="sync-pill-m">
       <div class="sync-dot"></div><span id="sync-label-m">Local</span>
@@ -100,10 +104,11 @@
   <!-- ═══ Contenido ═══ -->
   <main class="main">
     <div class="content">
-      <div id="page-conteo"></div>
+      <div id="page-conteo" style="display:none"></div>
       <div id="page-registro" style="display:none"></div>
       <div id="page-ingresos" style="display:none"></div>
-      <div id="page-resumen" style="display:none"></div>
+      <div id="page-egresos" style="display:none"></div>
+      <div id="page-resumen"></div>
       <div id="page-despachos" style="display:none"></div>
       <div id="page-comunicados" style="display:none">
         <div class="sec-header">
@@ -138,11 +143,11 @@
   <svg width="26" height="26" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
 </button>
 <nav class="m-bottomnav">
-  <button class="mbn-item" data-page="resumen">
+  <button class="mbn-item active" data-page="resumen">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
     <span>Resumen</span>
   </button>
-  <button class="mbn-item active" data-page="conteo">
+  <button class="mbn-item" data-page="conteo">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
     <span>Insumos</span>
   </button>
@@ -153,6 +158,10 @@
   <button class="mbn-item" data-page="ingresos">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
     <span>Ingresos</span>
+  </button>
+  <button class="mbn-item" data-page="egresos">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    <span>Egresos</span>
   </button>
   <button class="mbn-item" data-page="despachos">
     <span style="position:relative;display:inline-block;">

@@ -5,12 +5,17 @@
 // dentro de su <div id="qa-panel-egreso">: abrir/cerrar la hoja móvil entera
 // lo maneja ingresorapido.js (el "shell" compartido), no este archivo.
 //
-// Busca un solicitante + arma un carrito de ítems y, al confirmar, genera
-// una comanda real (equivalente a la "Entrega Rápida" de UCVComandas,
+// Pide un destino de texto libre + arma un carrito de ítems y, al confirmar,
+// genera una comanda real (equivalente a la "Entrega Rápida" de UCVComandas,
 // origen='rapida') vía la RPC create_comanda_rapida — no un simple
 // decremento de conteo. La RPC también crea el movement/movement_item de
 // salida correspondiente, así que el descuento real de stock ocurre en el
 // servidor (trigger trg_movement_items_apply), nunca localmente.
+//
+// Sin selector de Solicitante a propósito (ver supabase/2026-08-11-egreso-
+// destino-libre.sql): no había forma de ver/editar las personas creadas
+// desde acá, así que se reemplazó por un campo de texto libre ("Destino")
+// que va directo a comandas.notas — visible en la pestaña Egresos.
 //
 // A diferencia del conteo (offline-first), esta acción REQUIERE conexión:
 // crea un documento de negocio irreversible con reserva de stock en tiempo
@@ -29,18 +34,10 @@ import { toast } from '../components/toast.js';
 let _host = null;
 let _onSubmitted = null;
 let _onClose = null;                  // notifica al switcher (app.js) para volver a modo Ingreso
-let _solicitante = null;              // { ci, name, surname }
+let _destino = '';                    // texto libre — va a comandas.notas
 let _rows = [{ item: null, cantidad: null }];
 let _submitting = false;
 let _pendingOpId = null;              // client_op_id estable entre reintentos
-let _solSugg = [];                    // últimos resultados de búsqueda de solicitante
-let _addingPersona = false;           // toggle del mini-form "+ Nueva persona"
-
-// Espejo de PHONE_PREFIXES/PersonCategoria de UCVComandas (app.js / models/person.py).
-// Sin "¿Es ucevista?" a propósito: en Comandas esa casilla otorga un login de
-// voluntario automático (_grant_vol_access) — acá el pedido es explícitamente
-// "sin ingreso, solo registrado en persons, sin área", así que se omite entero.
-const PHONE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
 
 function _headers(extra = {}) {
   return auth.authHeaders({
@@ -55,12 +52,12 @@ function _headers(extra = {}) {
 // si cualquiera de las 3 apps toca products/inventory) — no solo cuando
 // cambia la conectividad. Repintar todo el panel (_paint(), innerHTML
 // completo) en cada disparo borraba lo que el usuario tenía a medio
-// escribir (el form de "Nueva persona", el buscador, la cantidad de una
-// fila). Por eso acá NUNCA se llama _paint(): solo se actualiza el
-// indicador de conexión de forma puntual, y solo si de verdad cambió. El
-// panel puede seguir montado (oculto por el switcher) sin estar activo, así
-// que igual se guarda el chequeo de "cambió de verdad" — solo se quitó el
-// gate de "¿está open?" porque ya no hay una clase .open que lo indique acá.
+// escribir (el destino, el buscador, la cantidad de una fila). Por eso acá
+// NUNCA se llama _paint(): solo se actualiza el indicador de conexión de
+// forma puntual, y solo si de verdad cambió. El panel puede seguir montado
+// (oculto por el switcher) sin estar activo, así que igual se guarda el
+// chequeo de "cambió de verdad" — solo se quitó el gate de "¿está open?"
+// porque ya no hay una clase .open que lo indique acá.
 let _lastOnlineSeen = null;
 sync.onChange(() => {
   if (_lastOnlineSeen === sync.online) return;
@@ -82,12 +79,10 @@ export function renderEgresoRapido(hostEl, opts = {}) {
 }
 
 function _resetState() {
-  _solicitante = null;
+  _destino = '';
   _rows = [{ item: null, cantidad: null }];
   _submitting = false;
   _pendingOpId = null;
-  _solSugg = [];
-  _addingPersona = false;
 }
 
 // Activa el modo Egreso — llamado por el switcher (app.js) al cambiar de
@@ -96,7 +91,7 @@ function _resetState() {
 export async function openEgreso() {
   _lastOnlineSeen = sync.online;
   _paint();
-  setTimeout(() => _host?.querySelector('#eg-sol-search')?.focus(), 200);
+  setTimeout(() => _host?.querySelector('#eg-destino')?.focus(), 200);
 }
 
 // Reinicia el formulario de Egreso y avisa al switcher para volver a modo
@@ -123,51 +118,8 @@ function _head() {
     </div>`;
 }
 
-function _solicitanteBlock() {
-  if (_solicitante) {
-    return `
-      <div class="eg-sol-chip">
-        <span class="eg-sol-name">${escHtml(_solicitante.name)} ${escHtml(_solicitante.surname)}</span>
-        <button class="eg-x" id="eg-sol-clear" aria-label="Quitar solicitante">✕</button>
-      </div>`;
-  }
-  return `
-    <div class="eg-sol-row">
-      <div class="eg-searchbox eg-sol-searchbox">
-        <input id="eg-sol-search" placeholder="Buscar solicitante por nombre o cédula…" autocomplete="off">
-      </div>
-      <button class="eg-add-persona-btn" id="eg-add-persona-btn" type="button" title="Agregar nueva persona">+</button>
-    </div>
-    <div class="eg-sugg" id="eg-sol-sugg"></div>`;
-}
-
-// Ocupa todo el cuerpo de Egreso Rápido mientras está activo (ver _body()) —
-// no aparece "por debajo" de Solicitante ni compite por espacio con Ítems.
-function _personaFormHtml() {
-  return `
-    <div class="eg-persona-form">
-      <div class="eg-persona-head">
-        <div class="eg-persona-title">Nueva persona · sin acceso al sistema</div>
-        <button class="eg-x" id="eg-pqa-back" type="button" aria-label="Volver">
-          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <input class="eg-input" id="eg-pqa-ci" type="number" inputmode="numeric" placeholder="Cédula">
-      <div class="eg-persona-row">
-        <input class="eg-input" id="eg-pqa-nombre" placeholder="Nombre" maxlength="80">
-        <input class="eg-input" id="eg-pqa-apellido" placeholder="Apellido" maxlength="80">
-      </div>
-      <div class="eg-persona-row">
-        <select class="qa-new-sel eg-persona-tel-sel" id="eg-pqa-prefijo">
-          ${PHONE_PREFIXES.map(p => `<option value="${p}">${p}</option>`).join('')}
-        </select>
-        <input class="eg-input" id="eg-pqa-numero" inputmode="numeric" maxlength="7" placeholder="1234567">
-      </div>
-      <div class="eg-persona-actions">
-        <button class="eg-persona-save" id="eg-pqa-save" type="button">Guardar persona</button>
-        <button class="qa-link" id="eg-pqa-cancel" type="button">Cancelar</button>
-      </div>
-    </div>`;
+function _destinoBlock() {
+  return `<input class="eg-input" id="eg-destino" placeholder="¿Hacia dónde se entrega?" maxlength="200" value="${escHtml(_destino)}">`;
 }
 
 function _rowHtml(row, idx) {
@@ -199,21 +151,15 @@ function _rowHtml(row, idx) {
 }
 
 function _body() {
-  // "Nueva persona" toma todo el cuerpo mientras está activo: Solicitante,
-  // Ítems y Confirmar no aparecen hasta guardar o cancelar (ver _wire()).
-  if (_addingPersona) {
-    return `<div class="eg-section">${_personaFormHtml()}</div>`;
-  }
-
-  const puedeEnviar = !!_solicitante
+  const puedeEnviar = _destino.trim().length > 0
     && _rows.some(r => r.item && r.cantidad > 0)
     && sync.online
     && !_submitting;
 
   return `
     <div class="eg-section">
-      <label class="eg-label">Solicitante</label>
-      ${_solicitanteBlock()}
+      <label class="eg-label">Destino</label>
+      ${_destinoBlock()}
     </div>
     <div class="eg-section">
       <label class="eg-label">Ítems</label>
@@ -236,36 +182,11 @@ function _paint() {
 function _wire() {
   _host.querySelector('#eg-close')?.addEventListener('click', closeEgreso);
 
-  // "Nueva persona" ocupa todo el cuerpo (ver _body()): Solicitante/Ítems/
-  // Confirmar no están en el DOM en este modo, nada más que cablear.
-  if (_addingPersona) {
-    const back = () => { _addingPersona = false; _paint(); };
-    _host.querySelector('#eg-pqa-back')?.addEventListener('click', back);
-    _host.querySelector('#eg-pqa-cancel')?.addEventListener('click', back);
-    _host.querySelector('#eg-pqa-save')?.addEventListener('click', _crearPersonaRapida);
-    _host.querySelector('#eg-pqa-ci')?.focus();
-    return;
-  }
-
-  // ── Solicitante ──
-  if (_solicitante) {
-    _host.querySelector('#eg-sol-clear')?.addEventListener('click', () => { _solicitante = null; _paint(); });
-  } else {
-    const inp = _host.querySelector('#eg-sol-search');
-    const box = _host.querySelector('#eg-sol-sugg');
-    let t;
-    inp?.addEventListener('input', () => {
-      clearTimeout(t);
-      const q = inp.value.trim();
-      if (!q) { box.innerHTML = ''; _solSugg = []; return; }
-      t = setTimeout(() => _searchSolicitantes(q, box), 200);
-    });
-
-    _host.querySelector('#eg-add-persona-btn')?.addEventListener('click', () => {
-      _addingPersona = true;
-      _paint();
-    });
-  }
+  // ── Destino ──
+  _host.querySelector('#eg-destino')?.addEventListener('input', e => {
+    _destino = e.target.value;
+    _refreshSubmitState();
+  });
 
   // ── Filas del carrito ──
   _rows.forEach((row, idx) => {
@@ -303,85 +224,8 @@ function _wire() {
 function _refreshSubmitState() {
   const btn = _host.querySelector('#eg-submit');
   if (!btn) return;
-  const puedeEnviar = !!_solicitante && _rows.some(r => r.item && r.cantidad > 0) && sync.online && !_submitting;
+  const puedeEnviar = _destino.trim().length > 0 && _rows.some(r => r.item && r.cantidad > 0) && sync.online && !_submitting;
   btn.disabled = !puedeEnviar;
-}
-
-async function _searchSolicitantes(q, box) {
-  try {
-    const term = encodeURIComponent(q);
-    const url = `${SUPABASE_URL}/rest/v1/persons_solicitantes?select=ci,name,surname`
-      + `&or=(name.ilike.*${term}*,surname.ilike.*${term}*,ci_text.ilike.*${term}*)`
-      + `&order=name.asc,surname.asc&limit=20`;
-    const res = await fetch(url, { headers: _headers() });
-    _solSugg = res.ok ? await res.json() : [];
-  } catch { _solSugg = []; }
-
-  box.innerHTML = _solSugg.length
-    ? _solSugg.map(p => `
-        <button class="qa-sugg-item eg-sol-item" data-ci="${p.ci}">
-          <span class="qa-sugg-name">${escHtml(p.name)} ${escHtml(p.surname)}</span>
-        </button>`).join('')
-    : `<div class="eg-sugg-empty">Sin resultados</div>`;
-
-  box.querySelectorAll('.eg-sol-item').forEach(b => {
-    b.onclick = () => {
-      _solicitante = _solSugg.find(p => String(p.ci) === b.dataset.ci) || null;
-      _paint();
-    };
-  });
-}
-
-// Crea una persona SIN inicio de sesión (RPC create_person, ver
-// supabase/new-project-schema.sql §8) — un solicitante no necesita cuenta,
-// solo existir en `persons` para poder elegirlo como destinatario.
-async function _crearPersonaRapida() {
-  const ci = parseInt(_host.querySelector('#eg-pqa-ci')?.value, 10);
-  const nombre = _host.querySelector('#eg-pqa-nombre')?.value.trim();
-  const apellido = _host.querySelector('#eg-pqa-apellido')?.value.trim();
-  const prefijo = _host.querySelector('#eg-pqa-prefijo')?.value;
-  const numero = _host.querySelector('#eg-pqa-numero')?.value.trim();
-  // Sin selector: toda persona creada acá queda como 'Externo' por ahora
-  // (pendiente decidir si este campo persiste o se descarta del todo).
-  const categoria = 'Externo';
-
-  if (!ci || ci <= 0) { toast.err('Cédula inválida.'); return; }
-  if (!nombre || !apellido) { toast.err('Nombre y apellido son obligatorios.'); return; }
-  if (!/^\d{7}$/.test(numero)) { toast.err('Teléfono inválido (7 dígitos tras el prefijo).'); return; }
-
-  const btn = _host.querySelector('#eg-pqa-save');
-  if (btn) btn.disabled = true;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_person`, {
-      method: 'POST',
-      headers: _headers(),
-      body: JSON.stringify({
-        p_ci: ci,
-        p_name: nombre,
-        p_surname: apellido,
-        p_phone_company_code: prefijo,
-        p_phone_number: numero,
-        p_categoria: categoria,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast.err(err.message || 'No se pudo registrar la persona.');
-      if (btn) btn.disabled = false;
-      return;
-    }
-    const rows = await res.json();
-    const p = Array.isArray(rows) ? rows[0] : rows;
-    if (!p) { toast.err('No se pudo registrar la persona.'); if (btn) btn.disabled = false; return; }
-    _solicitante = { ci: p.ci, name: p.name, surname: p.surname };
-    _addingPersona = false;
-    toast.ok('Persona guardada.');
-    _paint();
-  } catch (e) {
-    console.error('create_person', e);
-    toast.err('Sin conexión — no se pudo registrar la persona.');
-    if (btn) btn.disabled = false;
-  }
 }
 
 function _searchProducto(q, box, idx) {
@@ -442,7 +286,8 @@ async function _applyLocalStockPatch(items) {
 async function _submit() {
   if (_submitting) return;
   if (!sync.online) { toast.err('Egreso Rápido requiere estar en línea.'); return; }
-  if (!_solicitante) { toast.err('Elige un solicitante.'); return; }
+  const destino = _destino.trim();
+  if (!destino) { toast.err('Escribe un destino.'); return; }
 
   const items = _rows
     .filter(r => r.item && r.cantidad > 0)
@@ -454,11 +299,14 @@ async function _submit() {
 
   if (!_pendingOpId) _pendingOpId = uid();
 
+  // Sin solicitante_ci: el destino ahora es texto libre, va a comandas.notas
+  // (ver supabase/2026-08-11-egreso-destino-libre.sql) — la columna es
+  // nullable y la RPC ya no exige que exista.
   const payload = {
-    p_solicitante_ci: _solicitante.ci,
+    p_solicitante_ci: null,
     p_items: items,
     p_client_op_id: _pendingOpId,
-    p_note: null,
+    p_note: destino,
   };
 
   try {

@@ -1186,7 +1186,13 @@ begin
     end if;
   end if;
 
-  if p_solicitante_ci is null or not exists (select 1 from public.persons where ci = p_solicitante_ci) then
+  -- Sin Solicitante a propósito: no había forma de ver/editar las personas
+  -- creadas desde el formulario, así que se reemplazó por el campo "Destino"
+  -- de texto libre (p_note → comandas.notas). p_solicitante_ci queda como
+  -- columna nullable, ya sin uso desde el cliente (ver
+  -- supabase/2026-08-11-egreso-destino-libre.sql), pero se sigue validando
+  -- si algún día se vuelve a pasar un valor no nulo.
+  if p_solicitante_ci is not null and not exists (select 1 from public.persons where ci = p_solicitante_ci) then
     raise exception 'El solicitante no existe';
   end if;
 

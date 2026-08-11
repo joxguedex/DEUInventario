@@ -8,6 +8,7 @@ import { checkpoints } from './checkpoints.js';
 import { renderConteo, renderTop, renderList, refreshItem, syncView } from './views/conteo.js';
 import { renderRegistro } from './views/registro.js';
 import { renderIngresos, refreshIngresos } from './views/ingresos.js';
+import { renderEgresos, refreshEgresos } from './views/egresos.js';
 import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
 import { renderDespachos } from './views/despachos.js';
@@ -24,18 +25,19 @@ const pages = {
   conteo:   document.getElementById('page-conteo'),
   registro: document.getElementById('page-registro'),
   ingresos: document.getElementById('page-ingresos'),
+  egresos:  document.getElementById('page-egresos'),
   resumen:  document.getElementById('page-resumen'),
   despachos: document.getElementById('page-despachos'),
   comunicados: document.getElementById('page-comunicados'),
   voluntarios: document.getElementById('page-voluntarios'),
 };
 const TITLES = {
-  conteo: 'Insumos', registro: 'Bitácora', ingresos: 'Ingresos', resumen: 'Resumen',
+  conteo: 'Insumos', registro: 'Bitácora', ingresos: 'Ingresos', egresos: 'Egresos', resumen: 'Resumen',
   despachos: 'Despachos Pendientes', comunicados: 'Comunicados y Necesidades',
   voluntarios: 'Gestión de Accesos',
 };
 
-let _current = 'conteo';
+let _current = 'resumen';
 
 // ── Switcher Ingreso/Egreso Rápido (mismo panel, ver #qa-switcher en
 // index.html) — Egreso ya no tiene su propio botón/overlay; alterna dentro
@@ -64,6 +66,7 @@ async function nav(page) {
   if (page === 'conteo')   renderConteo(pages.conteo);
   if (page === 'registro') await renderRegistro(pages.registro);
   if (page === 'ingresos') renderIngresos(pages.ingresos);
+  if (page === 'egresos')  renderEgresos(pages.egresos);
   if (page === 'resumen')  renderResumen(pages.resumen);
   if (page === 'despachos') renderDespachos(pages.despachos);
   if (page === 'comunicados') refreshComunicados();
@@ -156,7 +159,7 @@ export function checkAuth() {
     // sesión (RLS exige `to authenticated`, ver supabase/new-project-
     // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
     // hay un access_token real.
-    if (freshLogin) { nav('conteo'); store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
+    if (freshLogin) { nav('resumen'); store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
     applyRBAC();
     // Recalcula qué insumos puede ver esta cuenta (coordinador ↔ su área,
     // ver store.visibleItems()) sin esperar a que el usuario cambie de
@@ -186,6 +189,7 @@ async function onEgresado() {
   updateSyncPill();
   if (_current === 'conteo')   { renderTop(); renderList(); }
   else if (_current === 'registro') await renderRegistro(pages.registro);
+  else if (_current === 'egresos')  await refreshEgresos();
   else if (_current === 'resumen')  renderResumen(pages.resumen);
 }
 
@@ -214,6 +218,17 @@ async function boot() {
   document.title = APP_TITLE;
   ['brand-bold', 'brand-bold-m'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = APP_NAME_BOLD; });
   ['brand-rest', 'brand-rest-m'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = APP_NAME_REST; });
+
+  // theme-color (color de la barra del navegador/task switcher) sigue a
+  // --brand-secondary en vez de quedar hardcodeado en el <meta> — único
+  // punto donde SÍ hace falta JS porque el navegador lo lee de un atributo,
+  // no de CSS. manifest.json e icon.svg no pueden seguir este mismo truco
+  // (ver comentario en index.html) y quedan como la excepción a mano.
+  const themeColorMeta = document.getElementById('theme-color-meta');
+  if (themeColorMeta) {
+    const secondary = getComputedStyle(document.documentElement).getPropertyValue('--brand-secondary').trim();
+    if (secondary) themeColorMeta.setAttribute('content', secondary);
+  }
 
   const badgeEl  = document.getElementById('version-badge');
   const badgeElM = document.getElementById('version-badge-m');
@@ -316,6 +331,7 @@ async function boot() {
 
     if (_current === 'conteo')   syncView();
     if (_current === 'ingresos') refreshIngresos();
+    if (_current === 'egresos')  refreshEgresos();
     if (_current === 'resumen')  renderResumen(pages.resumen);
   });
   updateSyncPill();
@@ -335,8 +351,8 @@ async function boot() {
     setInterval(() => sync.run(), 30_000);
   }
   
-  nav('conteo');
-  
+  nav('resumen');
+
   checkAuth();
 
   // Clic en el pill → sincronizar
