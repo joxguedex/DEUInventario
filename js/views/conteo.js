@@ -1,61 +1,63 @@
-// ── Vista de Insumos (antes "Conteo Físico") ──────────────
-// Catálogo completo agrupado por categoría. El ingreso/egreso rápido viven
-// en sus propios paneles (ingresorapido.js/egresorapido.js) — acá se ajusta
+// ── Vista de Insumos ───────────────────────────────────────
+// Portada de la pestaña "Insumos" de UCVAcopio: buscador + categorías como
+// pestañas de filtro + tarjetas de insumo (estado/cantidad/progreso/
+// controles −+/cantidad recibida). El ingreso/egreso rápido viven en sus
+// propios paneles (ingresorapido.js/egresorapido.js) — acá se ajusta
 // cantidad puntual a puntual (herramientas de conteo convencionales,
 // quedan marcadas como "Conteo" en la Bitácora, ver store.js#registrar).
 //
-// Cada insumo es un .cnt-item (data-id) que envuelve la línea visible
-// (.cnt-row: check + nombre + stock + botón ⋮) y un panel colapsable
-// (.cnt-row-menu: −/cantidad/+, "Renombrar", "Cambiar categoría" y
-// "Eliminar insumo") que se abre con el ⋮ — decisión de IHC para no saturar
-// la lista con controles siempre visibles.
-// "Eliminar insumo" borra el insumo por completo del catálogo (soft delete,
+// A diferencia de UCVAcopio, cada tarjeta agrega "Renombrar" (con fusión de
+// duplicados, _openRename) y "Categoría" (admin-only, _openRecat) — ninguna
+// existe en UCVAcopio porque sus categorías son un enum fijo, mientras que
+// acá las crea el admin en vivo (store.categories).
+// "Eliminar" borra el insumo por completo del catálogo (soft delete,
 // store.deleteInsumo); solo pide confirmación, no contraseña.
-// "Renombrar" abre un buscador (_openRename): si se elige un insumo ya
-// existente, el actual se fusiona en ese (suma de stock + eliminación del
-// actual, store.fusionarInsumo); si no se elige ninguno, solo se cambia el
-// nombre (store.renombrarInsumo). Pensado para limpiar duplicados/typos del
-// catálogo sin perder el stock ya contado.
-// "+ Nueva categoría" (admin-only) delega en store.createCategory — sin
-// categorías creadas no hay dónde clasificar un insumo nuevo, así que
-// Ingreso Rápido bloquea la creación hasta que exista al menos una (ver
-// ingresorapido.js).
+// "+ categoría" (admin-only, al final de las pestañas) delega en
+// store.createCategory — sin categorías creadas no hay dónde clasificar un
+// insumo nuevo, así que Ingreso Rápido bloquea la creación hasta que exista
+// al menos una (ver ingresorapido.js).
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
+import { escHtml, normSearch, catLabel, iStatus, iPct } from '../helpers.js';
 import { toast } from '../components/toast.js';
 
-// Orden de despliegue de categorías: alfabético por nombre — ya no hay un
-// orden fijo hardcodeado (las categorías las crea el admin en vivo, ver
-// views/admin.js). Se recalcula en cada renderList() contra store.categories.
-function _catOrder() {
-  return [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => String(c.id));
-}
+let _query = '';
+let _cat   = 'todos';
+let _root  = null;
 
-let _query    = '';
-let _expanded = new Set();
-let _root     = null;
-let _seeded   = false;   // ¿ya se abrió una categoría por defecto?
+// Categorías disponibles como pestaña de filtro: todas (admin/General) o
+// solo la propia (coordinador con área) — mismo criterio que
+// ingresorapido.js#_catOptions.
+function _tabCats() {
+  const all = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  if (auth.isCoordinador() && !auth.isGeneral()) {
+    return all.filter(c => String(c.id) === String(auth.area()));
+  }
+  return all;
+}
 
 export function renderConteo(rootEl) {
   _root = rootEl;
   _root.innerHTML = `
     <div class="cnt-wrap">
-      <div class="cnt-controls">
-        <div class="cnt-search">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="cnt-q" placeholder="Filtrar la lista…" autocomplete="off">
-          <button id="cnt-q-clear" class="cnt-q-clear" style="display:none">&times;</button>
+      <div class="inv-search-row">
+        <div class="inp-wrap">
+          <svg class="inp-ico" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input type="text" id="cnt-q" placeholder="Buscar insumo…" autocomplete="off">
+          <button id="cnt-q-clear" class="inp-clear" style="display:none" title="Limpiar">
+            <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
         </div>
-        ${auth.isAdmin() ? `<button class="adm-mini" id="cnt-new-cat">+ Nueva categoría</button>` : ''}
       </div>
+      <div class="tabs" id="cnt-tabs"></div>
       <div class="cnt-hint">${auth.canEditInventory()
-        ? 'Toca una categoría para ver sus insumos y ajustar cantidades · o usa el <strong>Ingreso Rápido</strong> para sumar al instante.'
-        : 'Toca una categoría para consultar sus insumos (solo lectura — tu cuenta no puede modificar el inventario).'}</div>
-      <div class="cnt-list" id="cnt-list"></div>
+        ? 'Toca una categoría para filtrar · ajusta cantidades directo desde cada tarjeta, o usa el <strong>Ingreso Rápido</strong> para sumar al instante.'
+        : 'Consulta los insumos por categoría (solo lectura — tu cuenta no puede modificar el inventario).'}</div>
+      <div class="inv-grid" id="cnt-grid"></div>
     </div>`;
   _wireControls();
+  _paintTabs();
   renderList();
 }
 
@@ -65,266 +67,220 @@ export function renderConteo(rootEl) {
 // llamándola tras cada cambio de stock.
 export function renderTop() {}
 
+function _paintTabs() {
+  const box = _root?.querySelector('#cnt-tabs');
+  if (!box) return;
+  const cats = _tabCats();
+  box.innerHTML = `
+    <div class="tab ${_cat === 'todos' ? 'active' : ''}" data-cat="todos">Todos</div>
+    ${cats.map(c => `<div class="tab ${String(_cat) === String(c.id) ? 'active' : ''}" data-cat="${escHtml(c.id)}">${escHtml(c.nombre)}</div>`).join('')}
+    ${auth.isAdmin() ? `<div class="tab tab-add" id="cnt-new-cat">+ categoría</div>` : ''}`;
+}
+
 function _wireControls() {
   const q = _root.querySelector('#cnt-q');
   const clr = _root.querySelector('#cnt-q-clear');
   let t;
   q.addEventListener('input', () => {
-    clr.style.display = q.value ? 'block' : 'none';
+    clr.style.display = q.value ? 'flex' : 'none';
     clearTimeout(t);
     t = setTimeout(() => { _query = q.value.trim(); renderList(); }, 150);
   });
-  clr.addEventListener('click', () => { q.value=''; _query=''; clr.style.display='none'; renderList(); q.focus(); });
-  _root.querySelector('#cnt-new-cat')?.addEventListener('click', _openNewCategoria);
+  clr.addEventListener('click', () => { q.value = ''; _query = ''; clr.style.display = 'none'; renderList(); q.focus(); });
+
+  _root.querySelector('#cnt-tabs')?.addEventListener('click', e => {
+    const tab = e.target.closest('.tab'); if (!tab) return;
+    if (tab.id === 'cnt-new-cat') { _openNewCategoria(); return; }
+    _cat = tab.dataset.cat;
+    _paintTabs();
+    renderList();
+  });
+
+  const grid = _root.querySelector('#cnt-grid');
+  grid.addEventListener('click', _onGridClick);
+  grid.addEventListener('input', _onGridInput);
+  grid.addEventListener('keydown', _onGridKeydown);
 }
 
 function _matches(item) {
+  if (_cat !== 'todos' && String(item.categoria) !== String(_cat)) return false;
   if (_query && !normSearch(item.nombre).includes(normSearch(_query))) return false;
   return true;
 }
 
-export function renderList() {
-  const list = _root?.querySelector('#cnt-list');
-  if (!list) return;
-
-  const groups = {};
-  for (const it of store.visibleItems()) {
-    if (it.deleted_at) continue;
-    if (!_matches(it)) continue;
-    (groups[it.categoria] ||= []).push(it);
-  }
-  const order = _catOrder();
-  const cats = order.filter(c => groups[c]?.length)
-    .concat(Object.keys(groups).filter(c => !order.includes(c)));
-
-  if (!cats.length) { list.innerHTML = `<div class="cnt-empty">Sin resultados.</div>`; return; }
-
-  // Abrir la primera categoría por defecto (una vez), para que se vean los insumos de entrada.
-  if (!_seeded && !_query) { _expanded.add(cats[0]); _seeded = true; }
-
-  const forceOpen = !!_query;
-  let html = '';
-  for (const c of cats) {
-    const items = groups[c].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-    const open  = forceOpen || _expanded.has(c);
-    const contados = items.filter(i => i.contado).length;
-    html += `
-      <section class="cnt-cat ${open ? 'open' : ''}" data-cat="${c}">
-        <button class="cnt-cat-head" data-toggle="${c}">
-          <span class="cnt-cat-ico" style="color:${catColor(c)}">${catIcon(c)}</span>
-          <span class="cnt-cat-name">${catLabel(c)}</span>
-          <span class="cnt-cat-badge">${contados}/${items.length}</span>
-          <svg class="cnt-cat-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <div class="cnt-cat-body">${open ? _bodyHTML(items) : ''}</div>
-      </section>`;
-  }
-  list.innerHTML = html;
-  _lastCount = store.visibleItems().length;
-  _wireList(list, groups, forceOpen);
-}
-
-// Cada insumo es un .cnt-item que envuelve la línea visible + el panel ⋮.
-const _bodyHTML = items => items.map(_itemHTML).join('');
-
-// Nº de insumos que había cuando se pintó la lista, para detectar altas remotas.
+// Nº de insumos visibles cuando se pintó la lista, para detectar altas/bajas remotas.
 let _lastCount = 0;
 
-// Repinta en vivo las filas ya visibles con los datos que acaba de traer el pull.
-// No re-renderiza la lista entera: así no se pierde el scroll ni las categorías
-// abiertas. Solo si otro dispositivo creó un insumo nuevo hace falta el repintado
-// completo.
-export function syncView() {
-  if (!_root) return;
-  renderTop();
+export function renderList() {
+  const grid = _root?.querySelector('#cnt-grid');
+  if (!grid) return;
 
-  if (store.visibleItems().length !== _lastCount) { renderList(); return; }
+  const list = store.visibleItems()
+    .filter(it => !it.deleted_at && _matches(it))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 
-  const wraps = _root.querySelectorAll('.cnt-item[data-id]');
-  const cats = new Set();
-  for (const wrap of wraps) {
-    const it = store.find(wrap.dataset.id);
-    if (!it) continue;
-    const inp = wrap.querySelector('.cnt-qty');
-    if (inp === document.activeElement) continue;  // el usuario está escribiendo ahí
-    _patchItem(wrap, it);
-    cats.add(wrap.closest('.cnt-cat'));
+  _lastCount = store.visibleItems().length;
+
+  if (!list.length) {
+    grid.innerHTML = `
+      <div class="empty" style="grid-column:1/-1">
+        <div class="empty-ico">${_boxLg()}</div>
+        <div class="empty-title">${_query ? `Sin resultados para "${escHtml(_query)}"` : 'Sin insumos en esta categoría'}</div>
+        <div class="empty-txt">${_query ? 'Prueba con otra palabra.' : 'Agrégalos desde Ingreso Rápido.'}</div>
+      </div>`;
+    return;
   }
-  for (const sec of cats) _updateBadge(sec);
+
+  grid.innerHTML = list.map(cardHtml).join('');
 }
 
-const _check = () => `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-const _dots = () => `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
+function _boxLg() {
+  return `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`;
+}
 
-function _itemHTML(it) {
-  const done = it.contado;
-  // El coordinador del área "General" solo consulta (auth.canEditInventory()):
-  // sin botón ⋮ ni panel −/cantidad/+/eliminar — nunca puede modificar el
-  // inventario de ninguna área (documentation/05-autenticacion.md).
-  if (!auth.canEditInventory()) {
-    return `
-      <div class="cnt-item" data-id="${escHtml(it.id)}">
-        <div class="cnt-row ${done ? 'done' : ''}">
-          <div class="cnt-row-check">${done ? _check() : ''}</div>
-          <div class="cnt-row-name">${escHtml(it.nombre)}${it.unidad && it.unidad !== 'und' ? `<span class="cnt-row-unit">${escHtml(it.unidad)}</span>` : ''}</div>
-          <div class="cnt-row-stock">${done ? it.cantidad : '—'}</div>
-        </div>
-      </div>`;
-  }
+// ── Tarjeta de insumo (misma estética que UCVAcopio/js/views/inventory.js) ──
+function cardHtml(it) {
+  const s  = iStatus(it);
+  const fc = s === 'critico' ? 'fill-red' : s === 'bajo' ? 'fill-amber' : s === 'none' ? 'fill-gray' : 'fill-green';
+  const tt = s === 'critico' ? 'Crítico' : s === 'bajo' ? 'Bajo' : s === 'none' ? 'No necesario' : 'OK';
+  const tc = s === 'critico' ? 'tag-red' : s === 'bajo' ? 'tag-amber' : s === 'none' ? 'tag-gray' : 'tag-green';
+  const umbralTxt = it.umbral === 0 ? 'no necesario' : `alerta &lt; ${it.umbral}`;
+  const id = escHtml(it.id);
+
   return `
-    <div class="cnt-item" data-id="${escHtml(it.id)}">
-      <div class="cnt-row ${done ? 'done' : ''}">
-        <div class="cnt-row-check">${done ? _check() : ''}</div>
-        <div class="cnt-row-name">${escHtml(it.nombre)}${it.unidad && it.unidad !== 'und' ? `<span class="cnt-row-unit">${escHtml(it.unidad)}</span>` : ''}</div>
-        <div class="cnt-row-stock">${done ? it.cantidad : '—'}</div>
-        <button class="cnt-row-menu-btn" aria-label="Opciones de conteo" tabindex="-1">${_dots()}</button>
-      </div>
-      <div class="cnt-row-menu" style="display:none">
-        <div class="cnt-row-input">
-          <button class="cnt-step" data-step="-1" tabindex="-1">−</button>
-          <input class="cnt-qty" type="number" inputmode="numeric" min="0" step="1" value="${done ? it.cantidad : ''}" placeholder="0">
-          <button class="cnt-step" data-step="1" tabindex="-1">+</button>
+    <div class="inv-card status-${s}" data-id="${id}">
+      <div class="ic-header">
+        <div>
+          <div class="ic-name">${escHtml(it.nombre)}</div>
+          <div class="ic-cat">${escHtml(catLabel(it.categoria))}</div>
         </div>
-        <button class="cnt-row-rename">Renombrar</button>
-        ${auth.isAdmin() ? '<button class="cnt-row-recat">Cambiar categoría</button>' : ''}
-        <button class="cnt-row-delete">Eliminar insumo</button>
+        <span class="tag ${tc}">${tt}</span>
       </div>
+      <div class="ic-qty">${it.cantidad}</div>
+      <div class="ic-unit">${escHtml(it.unidad)} · ${umbralTxt}</div>
+      <div class="ic-prog-row">
+        <div class="prog"><div class="prog-fill ${fc}" style="width:${iPct(it)}%"></div></div>
+      </div>
+      ${auth.canEditInventory() ? `
+      <div class="ic-controls">
+        <button class="qty-btn" data-action="dec" data-id="${id}" tabindex="-1">−</button>
+        <input type="number" class="qty-input" inputmode="numeric" min="0" value="${it.cantidad}" data-id="${id}">
+        <button class="qty-btn" data-action="inc" data-id="${id}" tabindex="-1">+</button>
+      </div>
+      <div class="ic-quickadd">
+        <input type="number" class="ic-qadd-inp" inputmode="numeric" min="1" placeholder="Cantidad recibida…" data-qadd-id="${id}">
+        <button class="ic-qadd-btn" data-action="add" data-id="${id}">+ Sumar</button>
+      </div>
+      <div class="ic-actions">
+        <button class="cnt-row-rename" data-action="rename" data-id="${id}">Renombrar</button>
+        ${auth.isAdmin() ? `<button class="cnt-row-recat" data-action="recat" data-id="${id}">Categoría</button>` : ''}
+        <button class="cnt-row-delete" data-action="delete" data-id="${id}">Eliminar</button>
+      </div>` : ''}
     </div>`;
 }
 
-// Aplica el estado de `it` a un .cnt-item ya pintado (sin reconstruir el HTML).
-function _patchItem(wrap, it) {
-  const line = wrap.querySelector('.cnt-row');
-  line.classList.toggle('done', it.contado);
-  line.querySelector('.cnt-row-check').innerHTML = it.contado ? _check() : '';
-  line.querySelector('.cnt-row-stock').textContent = it.contado ? it.cantidad : '—';
-  const qtyInp = wrap.querySelector('.cnt-qty');
-  if (qtyInp) qtyInp.value = it.contado ? it.cantidad : '';
+// Reemplaza una tarjeta ya pintada por su versión actualizada (sin
+// reconstruir toda la grilla — conserva scroll y el resto de las tarjetas).
+function _patchCard(card, it) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = cardHtml(it);
+  const fresh = tmp.firstElementChild;
+  card.replaceWith(fresh);
+  return fresh;
 }
 
-function _wireList(list, groups, forceOpen) {
-  list.querySelectorAll('.cnt-cat-head').forEach(head => {
-    head.addEventListener('click', () => {
-      const c = head.dataset.toggle;
-      const sec = head.closest('.cnt-cat');
-      const body = sec.querySelector('.cnt-cat-body');
-      const isOpen = sec.classList.toggle('open');
-      if (isOpen) {
-        if (!body.innerHTML.trim()) {
-          const items = (groups[c] || []).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-          body.innerHTML = _bodyHTML(items);
-        }
-        if (!forceOpen) _expanded.add(c);
-      } else if (!forceOpen) _expanded.delete(c);
-    });
-  });
-  list.addEventListener('input', _onInput);
-  list.addEventListener('click', _onClick);
-  list.addEventListener('keydown', _onKeydown);
+// Repinta en vivo las tarjetas ya visibles con los datos que acaba de traer
+// el pull. No reconstruye toda la grilla (se pierde el scroll) salvo que
+// cambie la cantidad total de insumos visibles (alta/baja remota).
+export function syncView() {
+  if (!_root) return;
+  if (store.visibleItems().length !== _lastCount) { renderList(); return; }
+  const cards = _root.querySelectorAll('.inv-card[data-id]');
+  for (const card of cards) {
+    if (card.contains(document.activeElement)) continue; // el usuario está escribiendo ahí
+    const it = store.find(card.dataset.id);
+    if (it) _patchCard(card, it);
+  }
 }
 
-async function _saveRow(wrap) {
-  const id  = wrap.dataset.id;
-  const inp = wrap.querySelector('.cnt-qty');
-  const val = inp.value === '' ? 0 : parseInt(inp.value, 10) || 0;
-  const it = await store.setTotal(id, val);
-  const line = wrap.querySelector('.cnt-row');
-  line.classList.add('done');
-  line.querySelector('.cnt-row-check').innerHTML = _check();
-  line.querySelector('.cnt-row-stock').textContent = it ? it.cantidad : val;
-  inp.value = it ? it.cantidad : val;
-  _updateBadge(wrap.closest('.cnt-cat'));
-  renderTop();
-}
-
-function _updateBadge(sec) {
-  if (!sec) return;
-  const cat = sec.dataset.cat;
-  const items = store.visibleItems().filter(i => String(i.categoria) === String(cat) && !i.deleted_at);
-  const badge = sec.querySelector('.cnt-cat-badge');
-  if (badge) badge.textContent = `${items.filter(i => i.contado).length}/${items.length}`;
-}
-
-// Refresco puntual de un insumo tocado desde Ingreso Rápido
+// Refresco puntual de un insumo tocado desde Ingreso Rápido.
 export function refreshItem(id) {
   if (!_root) return;
-  renderTop();
   const it = store.find(id);
   if (!it) return;
-  const wrap = _root.querySelector(`.cnt-item[data-id="${CSS.escape(id)}"]`);
-  if (wrap) {
-    _patchItem(wrap, it);
-    _updateBadge(wrap.closest('.cnt-cat'));
-  } else {
-    _updateBadge(_root.querySelector(`.cnt-cat[data-cat="${it.categoria}"]`));
-  }
+  const card = _root.querySelector(`.inv-card[data-id="${CSS.escape(id)}"]`);
+  if (card) _patchCard(card, it);
 }
 
 const _timers = new WeakMap();
-function _onInput(e) {
-  const inp = e.target.closest('.cnt-qty'); if (!inp) return;
-  const wrap = inp.closest('.cnt-item');
-  clearTimeout(_timers.get(wrap));
-  _timers.set(wrap, setTimeout(() => _saveRow(wrap), 550));
+
+async function _saveQty(card, id, val) {
+  const it = await store.setTotal(id, val);
+  if (it) _patchCard(card, it);
 }
-function _onClick(e) {
-  const menuBtn = e.target.closest('.cnt-row-menu-btn');
-  if (menuBtn) {
-    const wrap = menuBtn.closest('.cnt-item');
-    const menu = wrap.querySelector('.cnt-row-menu');
-    const willOpen = menu.style.display === 'none';
-    // Cerrar cualquier otro menú abierto en la lista (uno a la vez, evita
-    // confusión de qué fila se está editando).
-    _root.querySelectorAll('.cnt-row-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
-    menu.style.display = willOpen ? '' : 'none';
-    if (willOpen) wrap.querySelector('.cnt-qty')?.focus();
+
+function _onGridClick(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  const card = btn.closest('.inv-card');
+
+  if (action === 'dec' || action === 'inc') {
+    const inp = card.querySelector('.qty-input');
+    const cur = inp.value === '' ? 0 : parseInt(inp.value, 10) || 0;
+    const next = Math.max(0, cur + (action === 'inc' ? 1 : -1));
+    inp.value = next;
+    clearTimeout(_timers.get(card));
+    _saveQty(card, id, next);
     return;
   }
 
-  const renBtn = e.target.closest('.cnt-row-rename');
-  if (renBtn) {
-    const wrap = renBtn.closest('.cnt-item');
-    _openRename(wrap.dataset.id);
-    return;
-  }
-
-  const recatBtn = e.target.closest('.cnt-row-recat');
-  if (recatBtn) {
-    const wrap = recatBtn.closest('.cnt-item');
-    _openRecat(wrap.dataset.id);
-    return;
-  }
-
-  const delBtn = e.target.closest('.cnt-row-delete');
-  if (delBtn) {
-    const wrap = delBtn.closest('.cnt-item');
-    const it = store.find(wrap.dataset.id);
-    if (!confirm(`¿Seguro que deseas eliminar "${it?.nombre || ''}" del catálogo por completo? No se puede deshacer.`)) return;
+  if (action === 'add') {
+    const inp = card.querySelector('.ic-qadd-inp');
+    const qty = parseInt(inp.value, 10) || 0;
+    if (qty <= 0) { inp.focus(); return; }
     (async () => {
-      await store.deleteInsumo(wrap.dataset.id);
-      wrap.remove();
-      _updateBadge(_root.querySelector(`.cnt-cat[data-cat="${it?.categoria}"]`));
-      renderTop();
-      toast.ok('Insumo eliminado.');
+      const it = await store.registrar(id, qty);
+      if (!it) return;
+      toast.ok(`+${qty} ${it.nombre} · total ${it.cantidad}`);
+      _patchCard(card, it);
     })();
     return;
   }
 
-  const step = e.target.closest('.cnt-step'); if (!step) return;
-  const wrap = step.closest('.cnt-item');
-  const inp = wrap.querySelector('.cnt-qty');
-  const cur = inp.value === '' ? 0 : parseInt(inp.value, 10) || 0;
-  inp.value = Math.max(0, cur + parseInt(step.dataset.step, 10));
-  clearTimeout(_timers.get(wrap));
-  _saveRow(wrap);
+  if (action === 'rename') { _openRename(id); return; }
+  if (action === 'recat')  { _openRecat(id); return; }
+
+  if (action === 'delete') {
+    const it = store.find(id);
+    if (!confirm(`¿Seguro que deseas eliminar "${it?.nombre || ''}" del catálogo por completo? No se puede deshacer.`)) return;
+    (async () => {
+      await store.deleteInsumo(id);
+      card.remove();
+      toast.ok('Insumo eliminado.');
+    })();
+  }
 }
-function _onKeydown(e) {
-  if (e.key !== 'Enter') return;
-  const inp = e.target.closest('.cnt-qty'); if (!inp) return;
+
+function _onGridInput(e) {
+  const inp = e.target.closest('.qty-input');
+  if (!inp) return;
+  const card = inp.closest('.inv-card');
+  const id = inp.dataset.id;
+  clearTimeout(_timers.get(card));
+  _timers.set(card, setTimeout(() => {
+    _saveQty(card, id, inp.value === '' ? 0 : parseInt(inp.value, 10) || 0);
+  }, 550));
+}
+
+function _onGridKeydown(e) {
+  const inp = e.target.closest('.qty-input');
+  if (!inp || e.key !== 'Enter') return;
   e.preventDefault();
-  const wrap = inp.closest('.cnt-item');
-  clearTimeout(_timers.get(wrap));
-  _saveRow(wrap);
+  const card = inp.closest('.inv-card');
+  const id = inp.dataset.id;
+  clearTimeout(_timers.get(card));
+  _saveQty(card, id, inp.value === '' ? 0 : parseInt(inp.value, 10) || 0);
 }
 
 // ── Modal "Renombrar" ────────────────────────────────────
@@ -427,10 +383,7 @@ function _openRename(id) {
       if (!confirm(`¿Fusionar "${it.nombre}" con "${target.nombre}"? Se sumará el stock de "${it.nombre}" (${it.cantidad}) a "${target.nombre}" y "${it.nombre}" se eliminará del catálogo. No se puede deshacer.`)) return;
       await store.fusionarInsumo(it.id, target.id);
       _closeRen();
-      const wrap = _root.querySelector(`.cnt-item[data-id="${CSS.escape(it.id)}"]`);
-      wrap?.remove();
-      _updateBadge(_root.querySelector(`.cnt-cat[data-cat="${it.categoria}"]`));
-      renderTop();
+      renderList();
       toast.ok(`Fusionado con "${target.nombre}".`);
       return;
     }
@@ -438,11 +391,7 @@ function _openRename(id) {
     if (normSearch(val) === normSearch(it.nombre)) { _closeRen(); return; }
     await store.renombrarInsumo(it.id, val);
     _closeRen();
-    const wrap = _root.querySelector(`.cnt-item[data-id="${CSS.escape(it.id)}"]`);
-    if (wrap) {
-      const unit = it.unidad && it.unidad !== 'und' ? `<span class="cnt-row-unit">${escHtml(it.unidad)}</span>` : '';
-      wrap.querySelector('.cnt-row-name').innerHTML = `${escHtml(val)}${unit}`;
-    }
+    renderList();
     toast.ok('Insumo renombrado.');
   });
 
@@ -455,7 +404,7 @@ function _openRename(id) {
 // diferencia de crear/editar/eliminar insumos, que también puede un
 // coordinador dentro de su propia categoría) — ver update_product_category
 // en supabase/new-project-schema.sql §8b. El botón que abre esto ya está
-// oculto para no-admin (_itemHTML), esto es respaldo defensivo: la RPC en
+// oculto para no-admin (cardHtml), esto es respaldo defensivo: la RPC en
 // sí también rechaza a cualquiera que no sea admin.
 function _openRecat(id) {
   const it = store.find(id);
@@ -498,12 +447,10 @@ function _openRecat(id) {
   });
 }
 
-// ── "+ Nueva categoría" (admin-only) — atajo rápido sin salir de Insumos.
+// ── "+ categoría" (admin-only) — atajo rápido sin salir de Insumos.
 // La gestión completa (renombrar/borrar) vive en el panel de administrador
 // (ver views/admin.js#_wireCategorias); acá solo se resuelve el caso más
-// común: falta una categoría para poder clasificar el próximo insumo. Usa el
-// mismo modal (_renModal/_closeRen) que Renombrar/Cambiar categoría, en vez
-// de un prompt() nativo del navegador.
+// común: falta una categoría para poder clasificar el próximo insumo.
 function _openNewCategoria() {
   if (!auth.isAdmin()) return;
 
@@ -533,7 +480,7 @@ function _openNewCategoria() {
       await store.createCategory(val);
       _closeRen();
       toast.ok(`Categoría "${val}" creada.`);
-      renderTop();
+      _paintTabs();
       renderList();
     } catch (ex) {
       err.textContent = ex.message || 'No se pudo crear la categoría.';

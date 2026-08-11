@@ -95,10 +95,10 @@ inventario de ninguna área. `auth.canEditInventory()` (`admin`, o
 `coordinador` que no sea `general`) gatea cada punto de escritura sobre
 insumos/conteo:
 
-- **`views/conteo.js`**: sin `auth.canEditInventory()`, `_itemHTML()` pinta
-  la fila sin el botón ⋮ ni el panel −/cantidad/+/eliminar — solo
-  nombre/stock/check, de solo lectura. `_patchItem()` tolera la ausencia de
-  `.cnt-qty` en esas filas (repintado en vivo tras un pull).
+- **`views/conteo.js`**: sin `auth.canEditInventory()`, `cardHtml()` pinta la
+  tarjeta sin controles −/cantidad/+, sin "Cantidad recibida" y sin la fila
+  de acciones (Renombrar/Categoría/Eliminar) — solo nombre/categoría/
+  cantidad/progreso, de solo lectura.
 - **`app.js#applyRBAC()`**: Ingreso y Egreso Rápido comparten un mismo panel
   (`#ingresorapido`, alternado por `.qa-switcher` — ver
   [04-vistas-ui.md](./04-vistas-ui.md)); para General se oculta solo la

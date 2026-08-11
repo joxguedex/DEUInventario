@@ -74,3 +74,18 @@ export function catColor(id) {
   if (!Number.isFinite(n)) return '#9ca3af';
   return _PALETTE[Math.abs(n) % _PALETTE.length];
 }
+
+// ── Estado de stock de un insumo (portado de UCVAcopio/js/helpers.js) ──
+// umbral 0 = "no necesario" (el admin marcó que no hace falta reponerlo).
+export function iStatus(item) {
+  if (item.umbral === 0) return 'none';
+  if (!item.umbral)      return item.cantidad === 0 ? 'critico' : 'ok';
+  if (item.cantidad <= item.umbral * 0.4) return 'critico';
+  if (item.cantidad <= item.umbral)       return 'bajo';
+  return 'ok';
+}
+
+// % de llenado de la barra de progreso de una tarjeta de insumo.
+export function iPct(item) {
+  return Math.min(100, (item.cantidad / Math.max(item.umbral * 2.5, item.cantidad, 1)) * 100);
+}
