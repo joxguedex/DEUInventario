@@ -106,6 +106,16 @@
     <div class="content">
       <div id="page-conteo" style="display:none"></div>
       <div id="page-registro" style="display:none"></div>
+      <!-- Móvil: Ingresos/Egresos comparten un solo botón en la bottom nav
+           (ver .mbn-item[data-page="movimientos"] abajo) — esta barra deja
+           alternar entre ambos sin volver a la bottom nav. Oculta en
+           desktop (que ya tiene los dos tn-item por separado) y oculta en
+           móvil salvo cuando la página activa es una de las dos (.show, ver
+           js/app.js#_syncMovSubnav). -->
+      <div class="m-subnav" id="m-subnav-mov">
+        <button class="m-subnav-btn active" data-subpage="ingresos">Ingresos</button>
+        <button class="m-subnav-btn" data-subpage="egresos">Egresos</button>
+      </div>
       <div id="page-ingresos" style="display:none"></div>
       <div id="page-egresos" style="display:none"></div>
       <div id="page-resumen"></div>
@@ -155,13 +165,13 @@
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h6"/></svg>
     <span>Historial</span>
   </button>
-  <button class="mbn-item" data-page="ingresos">
-    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-    <span>Ingresos</span>
-  </button>
-  <button class="mbn-item" data-page="egresos">
-    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-    <span>Egresos</span>
+  <!-- Móvil: un solo botón para Ingresos+Egresos (desktop conserva los dos
+       tn-item por separado en .tn-nav) — abre la última sub-página vista y
+       queda "active" para las dos; el toggle entre ambas vive en
+       #m-subnav-mov, ver comentario arriba de #page-ingresos. -->
+  <button class="mbn-item" data-page="movimientos">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17V3M7 3L3 7M7 3l4 4"/><path d="M17 7v14M17 21l4-4M17 21l-4-4"/></svg>
+    <span>Movimientos</span>
   </button>
   <button class="mbn-item" data-page="despachos">
     <span style="position:relative;display:inline-block;">

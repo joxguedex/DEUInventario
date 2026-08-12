@@ -164,7 +164,11 @@ create table public.products (
   client_id    text not null unique,
   deleted_at   timestamptz,
   unidad       text not null default 'und',
-  category_id  bigint not null references public.categories (id) on delete restrict,
+  -- Nullable: un producto SOFT-borrado (deleted_at) puede quedar sin
+  -- categoría cuando esta se elimina (ver delete_category, sección 8b) —
+  -- ya no cuenta para el chequeo "hay productos en esta categoría" ni
+  -- bloquea el DELETE, así que el FK cede en vez de restringir.
+  category_id  bigint references public.categories (id) on delete set null,
   constraint products_name_unidad_key unique (name, unidad)
 );
 create index products_category_id_idx on public.products (category_id);
@@ -898,7 +902,11 @@ begin
   if not public.is_admin() then
     raise exception 'Solo un administrador puede eliminar categorías';
   end if;
-  if exists (select 1 from public.products where category_id = p_id) then
+  -- Solo productos VIVOS bloquean el borrado — uno soft-borrado sigue en la
+  -- BD (para no perder su historial) pero ya no cuenta como "en uso". Los
+  -- soft-borrados que queden apuntando a p_id se desvinculan solos por el FK
+  -- category_id → categories ON DELETE SET NULL al ejecutar el DELETE de abajo.
+  if exists (select 1 from public.products where category_id = p_id and deleted_at is null) then
     raise exception 'Hay productos en esta categoría — reasígnalos o elimínalos antes de borrarla';
   end if;
 

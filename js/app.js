@@ -39,6 +39,22 @@ const TITLES = {
 
 let _current = 'resumen';
 
+// Móvil: Ingresos/Egresos comparten un solo botón en la bottom nav (ver
+// .mbn-item[data-page="movimientos"] en index.html) — _movSub recuerda cuál
+// de las dos se vio último, para que el botón reabra ahí en vez de resetear
+// siempre a Ingresos.
+let _movSub = 'ingresos';
+function _syncMovSubnav(page) {
+  const bar = document.getElementById('m-subnav-mov');
+  if (!bar) return;
+  const isMov = page === 'ingresos' || page === 'egresos';
+  bar.classList.toggle('show', isMov);
+  if (isMov) {
+    _movSub = page;
+    bar.querySelectorAll('.m-subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.subpage === page));
+  }
+}
+
 // ── Switcher Ingreso/Egreso Rápido (mismo panel, ver #qa-switcher en
 // index.html) — Egreso ya no tiene su propio botón/overlay; alterna dentro
 // de <aside id="ingresorapido"> mostrando/ocultando #qa-panel-ingreso vs.
@@ -58,8 +74,11 @@ function _setQaMode(mode) {
 
 async function nav(page) {
   _current = page;
-  document.querySelectorAll('.tn-item, .mbn-item').forEach(n =>
-    n.classList.toggle('active', n.dataset.page === page));
+  document.querySelectorAll('.tn-item, .mbn-item').forEach(n => {
+    const p = n.dataset.page;
+    n.classList.toggle('active', p === page || (p === 'movimientos' && (page === 'ingresos' || page === 'egresos')));
+  });
+  _syncMovSubnav(page);
   Object.entries(pages).forEach(([k, el]) => el.style.display = k === page ? 'block' : 'none');
   document.getElementById('page-title').textContent = TITLES[page] || '';
 
@@ -247,7 +266,10 @@ async function boot() {
   clock(); setInterval(clock, 1000);
 
   document.querySelectorAll('.tn-item, .mbn-item').forEach(n =>
-    n.addEventListener('click', () => nav(n.dataset.page)));
+    n.addEventListener('click', () => nav(n.dataset.page === 'movimientos' ? _movSub : n.dataset.page)));
+
+  document.querySelectorAll('.m-subnav-btn').forEach(b =>
+    b.addEventListener('click', () => nav(b.dataset.subpage)));
 
   // Enlaces "Ver todo" (p.ej. Resumen → Insumos/Comunicados, portado de
   // UCVAcopio/js/router.js) — delegado en document porque estos enlaces
