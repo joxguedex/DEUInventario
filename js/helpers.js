@@ -77,7 +77,12 @@ export function catColor(id) {
 
 // ── Estado de stock de un insumo (portado de UCVAcopio/js/helpers.js) ──
 // umbral 0 = "no necesario" (el admin marcó que no hace falta reponerlo).
+// umbral_max nulo/0 = "sin límite superior" (mismo criterio) — cuando está
+// fijado y se supera, "exceso" pisa cualquier otro estado: tener demasiado
+// de un insumo es información propia, independiente de si además está bajo
+// o sobre su umbral mínimo.
 export function iStatus(item) {
+  if (item.umbral_max && item.cantidad > item.umbral_max) return 'exceso';
   if (item.umbral === 0) return 'none';
   if (!item.umbral)      return item.cantidad === 0 ? 'critico' : 'ok';
   if (item.cantidad <= item.umbral * 0.4) return 'critico';

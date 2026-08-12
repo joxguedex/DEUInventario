@@ -15,6 +15,13 @@ let _allLogs = [];       // último set cargado/filtrado por área, sin filtrar 
 let _filtroTipo = 'todos'; // 'todos' | 'Recepción' | 'Conteo' | 'Egreso'
 let _scrollToDay = null; // fecha 'YYYY-MM-DD' pendiente de enfocar (ver focusRegistro)
 
+// Días desplegados — null hasta el primer _paint(), momento en que arranca
+// con solo "hoy" abierto (el resto colapsado, para ubicar un día más rápido
+// sin desplazarse por todo el historial). Persiste durante la sesión: no se
+// reinicia entre repintados (cambio de filtro, borrar un registro) ni al
+// volver a entrar a la pestaña, solo al recargar la página.
+let _expandedDays = null;
+
 // Llamado desde app.js tras nav('registro') cuando se llega acá con la
 // flecha "Ver en Historial" de una tarjeta de Ingresos/Egresos — preselecciona
 // el filtro de tipo y desplaza hasta el grupo del día correspondiente, para
@@ -156,15 +163,22 @@ function _paint() {
   const days = Object.keys(byDay).sort().reverse();
   const today = localDate(new Date());
 
+  if (!_expandedDays) _expandedDays = new Set([today]);
+  if (_scrollToDay) _expandedDays.add(_scrollToDay); // el día destino de "Ver en Historial" siempre se abre
+
   let html = `<div class="reg-wrap">${filtros}`;
   for (const d of days) {
     const recs = byDay[d];
     const totalPos = recs.reduce((s, r) => s + Math.max(0, r.cantidad), 0);
     const badge = d === today ? '<span class="reg-day-badge">Hoy</span>' : '';
+    const open = _expandedDays.has(d);
     html += `
-      <div class="reg-day" data-day="${d}">
+      <div class="reg-day${open ? ' open' : ''}" data-day="${d}">
         <div class="reg-day-head">
-          <span class="reg-day-name">${_fmtDayLong(d)}${badge}</span>
+          <span class="reg-day-name">
+            <svg class="reg-day-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            ${_fmtDayLong(d)}${badge}
+          </span>
           <span class="reg-day-sum">${recs.length} registro${recs.length!==1?'s':''} · +${totalPos.toLocaleString('es-VE')}</span>
         </div>
         <div class="reg-list">
@@ -175,6 +189,7 @@ function _paint() {
   html += '</div>';
   _root.innerHTML = html;
   _wireFilters();
+  _wireDays();
 
   if (_scrollToDay) {
     const day = _scrollToDay;
@@ -208,6 +223,18 @@ function _wireFilters() {
     b.addEventListener('click', () => {
       _filtroTipo = b.dataset.tipo;
       _paint();
+    });
+  });
+}
+
+// Despliega/colapsa el grupo de un día al tocar su encabezado — solo alterna
+// clases en el DOM (no repinta) para no perder scroll ni relanzar la carga.
+function _wireDays() {
+  _root.querySelectorAll('.reg-day').forEach(dayEl => {
+    dayEl.querySelector('.reg-day-head')?.addEventListener('click', () => {
+      const d = dayEl.dataset.day;
+      const open = dayEl.classList.toggle('open');
+      if (open) _expandedDays.add(d); else _expandedDays.delete(d);
     });
   });
 }

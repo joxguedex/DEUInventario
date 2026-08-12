@@ -30,7 +30,7 @@ export const checkpoints = {
       data: {
         items: store.items.map(i => ({
           id: i.id, nombre: i.nombre, categoria: i.categoria, unidad: i.unidad,
-          umbral: i.umbral, cantidad: i.cantidad, contado: i.contado,
+          umbral: i.umbral, umbral_max: i.umbral_max ?? null, cantidad: i.cantidad, contado: i.contado,
           contado_por: i.contado_por, updated_at: i.updated_at, nuevo: i.nuevo || false,
         })),
         logs: store.logs,

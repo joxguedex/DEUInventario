@@ -212,14 +212,16 @@ export const store = {
   // `categoria` es el id de una categoría existente (store.categories) —
   // ya no hay default fijo: sin categorías dinámicas cargadas no hay forma
   // de adivinar una razonable, el llamador (ingresorapido.js) debe mandarla.
-  async addNuevo({ nombre, categoria, unidad = 'und', umbral = 0, cantidad = 0 }) {
+  async addNuevo({ nombre, categoria, unidad = 'und', umbral = 0, umbralMax = null, cantidad = 0 }) {
     nombre = (nombre || '').trim();
     if (!nombre || categoria == null) return null;
+    umbralMax = umbralMax == null ? null : (Math.max(0, Math.round(umbralMax) || 0) || null);
     let item = this.items.find(i => normSearch(i.nombre) === normSearch(nombre));
     if (item) {
       item.categoria = categoria;
       item.unidad = unidad;
       item.umbral = Math.max(0, Math.round(umbral) || 0);
+      item.umbral_max = umbralMax;
       item.cantidad = 0;
       item.contado = false;
       item.contado_por = null;
@@ -229,7 +231,7 @@ export const store = {
     } else {
       item = {
         id: 'new-' + uid(),
-        nombre, categoria, unidad, umbral: Math.max(0, Math.round(umbral) || 0),
+        nombre, categoria, unidad, umbral: Math.max(0, Math.round(umbral) || 0), umbral_max: umbralMax,
         cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(), nuevo: true,
       };
       this.items.push(item);
@@ -266,15 +268,18 @@ export const store = {
     return it;
   },
 
-  // ── Cambiar el umbral de alerta de un insumo ya existente ──
-  // Distinto de crear (addNuevo, donde el umbral se define de una vez):
-  // esto ajusta el umbral de un insumo que ya está en el catálogo, desde el
-  // modal "Editar insumo" de views/conteo.js.
-  async setUmbral(id, umbral) {
+  // ── Cambiar el umbral de alerta (mínimo y/o máximo) de un insumo ya
+  // existente ── Distinto de crear (addNuevo, donde se define de una vez):
+  // esto ajusta los umbrales de un insumo que ya está en el catálogo, desde
+  // el modal "Editar insumo" de views/conteo.js. umbralMax null = "sin
+  // límite superior" (mismo criterio que umbral=0 = "no necesario").
+  async setUmbral(id, umbral, umbralMax = null) {
     const it = this.find(id);
     if (!it) return null;
     umbral = Math.max(0, Math.round(Number(umbral) || 0));
+    umbralMax = umbralMax == null ? null : (Math.max(0, Math.round(Number(umbralMax) || 0)) || null);
     it.umbral = umbral;
+    it.umbral_max = umbralMax;
     it.updated_at = nowISO();
     it.dirty = true;
     await db.put(it);

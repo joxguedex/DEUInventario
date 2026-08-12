@@ -161,6 +161,11 @@ create table public.products (
   updated_at   timestamptz not null default now(),
   metadata     jsonb not null default '{}'::jsonb,
   umbral       integer not null default 10 check (umbral >= 0),
+  -- Límite superior de stock: nulo/0 = "sin límite superior" (mismo
+  -- criterio que umbral=0 = "no necesario" reponer). Cuando está fijado y
+  -- la cantidad lo supera, el insumo pasa a estado "exceso" (ver
+  -- js/helpers.js#iStatus) — informativo, no crítico, por eso azul y no rojo.
+  umbral_max   integer check (umbral_max is null or umbral_max >= 0),
   client_id    text not null unique,
   deleted_at   timestamptz,
   unidad       text not null default 'und',
@@ -169,7 +174,8 @@ create table public.products (
   -- ya no cuenta para el chequeo "hay productos en esta categoría" ni
   -- bloquea el DELETE, así que el FK cede en vez de restringir.
   category_id  bigint references public.categories (id) on delete set null,
-  constraint products_name_unidad_key unique (name, unidad)
+  constraint products_name_unidad_key unique (name, unidad),
+  constraint products_umbral_range_chk check (umbral_max is null or umbral_max > umbral)
 );
 create index products_category_id_idx on public.products (category_id);
 

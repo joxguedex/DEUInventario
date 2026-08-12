@@ -153,10 +153,13 @@ function _boxLg() {
 // ── Tarjeta de insumo (misma estética que UCVAcopio/js/views/inventory.js) ──
 function cardHtml(it) {
   const s  = iStatus(it);
-  const fc = s === 'critico' ? 'fill-red' : s === 'bajo' ? 'fill-amber' : s === 'none' ? 'fill-gray' : 'fill-green';
-  const tt = s === 'critico' ? 'Crítico' : s === 'bajo' ? 'Bajo' : s === 'none' ? 'No necesario' : 'OK';
-  const tc = s === 'critico' ? 'tag-red' : s === 'bajo' ? 'tag-amber' : s === 'none' ? 'tag-gray' : 'tag-green';
-  const umbralTxt = it.umbral === 0 ? 'no necesario' : `alerta &lt; ${it.umbral}`;
+  const fc = s === 'critico' ? 'fill-red' : s === 'bajo' ? 'fill-amber' : s === 'exceso' ? 'fill-blue' : s === 'none' ? 'fill-gray' : 'fill-green';
+  const tt = s === 'critico' ? 'Crítico' : s === 'bajo' ? 'Bajo' : s === 'exceso' ? 'Exceso' : s === 'none' ? 'No necesario' : 'OK';
+  const tc = s === 'critico' ? 'tag-red' : s === 'bajo' ? 'tag-amber' : s === 'exceso' ? 'tag-blue' : s === 'none' ? 'tag-gray' : 'tag-green';
+  const umbralPartes = [];
+  if (it.umbral > 0) umbralPartes.push(`alerta &lt; ${it.umbral}`);
+  if (it.umbral_max) umbralPartes.push(`exceso &gt; ${it.umbral_max}`);
+  const umbralTxt = umbralPartes.length ? umbralPartes.join(' · ') : 'no necesario';
   const id = escHtml(it.id);
 
   return `
@@ -341,6 +344,10 @@ function _openEditItem(id) {
           <input id="ei-thr" type="number" min="0" value="${it.umbral}">
         </div>
       </div>
+      <div class="adm-field">
+        <label>Límite superior (exceso) — opcional</label>
+        <input id="ei-thr-max" type="number" min="0" placeholder="Sin límite" value="${it.umbral_max ?? ''}">
+      </div>
       <div class="adm-err" id="ei-err"></div>
       <div class="adm-actions-row">
         <button class="adm-btn adm-btn-danger" id="ei-delete">Eliminar</button>
@@ -353,6 +360,7 @@ function _openEditItem(id) {
   const catSel    = ov.querySelector('#ei-cat');
   const qtyInp    = ov.querySelector('#ei-qty');
   const thrInp    = ov.querySelector('#ei-thr');
+  const thrMaxInp = ov.querySelector('#ei-thr-max');
   const err       = ov.querySelector('#ei-err');
   const saveBtn   = ov.querySelector('#ei-save');
   const delBtn    = ov.querySelector('#ei-delete');
@@ -445,7 +453,14 @@ function _openEditItem(id) {
 
     const qty = qtyInp.value === '' ? it.cantidad : parseInt(qtyInp.value, 10) || 0;
     const thr = thrInp.value === '' ? it.umbral : parseInt(thrInp.value, 10) || 0;
-    if (thr !== it.umbral) await store.setUmbral(it.id, thr);
+    const thrMaxRaw = thrMaxInp.value.trim();
+    // 0 o vacío = "sin límite superior", mismo criterio que umbral=0 = "no necesario".
+    const thrMax = thrMaxRaw === '' ? null : (parseInt(thrMaxRaw, 10) || 0) || null;
+    if (thrMax !== null && thrMax <= thr) {
+      err.textContent = 'El límite superior debe ser mayor que el umbral de alerta.';
+      return;
+    }
+    if (thr !== it.umbral || thrMax !== (it.umbral_max ?? null)) await store.setUmbral(it.id, thr, thrMax);
     if (qty !== it.cantidad) await store.setTotal(it.id, qty);
 
     _closeRen();

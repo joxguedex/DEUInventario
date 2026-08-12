@@ -105,7 +105,7 @@ function _opItem(op) {
 
 function productPayload(item) {
   return { client_id: item.id, name: item.nombre, category_id: item.categoria,
-    unidad: item.unidad || 'und', umbral: item.umbral || 0,
+    unidad: item.unidad || 'und', umbral: item.umbral || 0, umbral_max: item.umbral_max ?? null,
     deleted_at: item.deleted_at || null };
 }
 
@@ -325,7 +325,7 @@ export const sync = {
     let remote = [], from = 0, limit = 1000;
     while (true) {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?updated_at=gt.${encodeURIComponent(fetchSince)}&select=id,client_id,name,category_id,unidad,umbral,updated_at,deleted_at,inventory(qnty,last_counted_at,last_counted_by)`,
+        `${SUPABASE_URL}/rest/v1/products?updated_at=gt.${encodeURIComponent(fetchSince)}&select=id,client_id,name,category_id,unidad,umbral,umbral_max,updated_at,deleted_at,inventory(qnty,last_counted_at,last_counted_by)`,
         { headers: _headers({ Range: `${from}-${from + limit - 1}` }) }
       );
       if (!res.ok) { this._fallo(res.status, await res.text()); throw new Error(`HTTP ${res.status} pull`); }
@@ -361,6 +361,7 @@ export const sync = {
              id: p.client_id,
              nombre: p.name,
              categoria: p.category_id, unidad: p.unidad || 'und', umbral: p.umbral || 0,
+             umbral_max: p.umbral_max ?? null,
              cantidad: 0, contado: false, contado_por: null, updated_at: p.updated_at
           };
           store.items.push(item);
@@ -394,6 +395,7 @@ export const sync = {
         categoria: p.category_id,
         unidad: p.unidad || local?.unidad || 'und',
         umbral: p.umbral ?? (local?.umbral ?? 10),
+        umbral_max: p.umbral_max ?? (local?.umbral_max ?? null),
         cantidad: pendiente ? (local?.cantidad ?? qnty) : qnty,
         contado:  pendiente ? (local?.contado ?? false) : contadoRemoto,
         contado_por: pendiente
