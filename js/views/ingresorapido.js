@@ -83,7 +83,7 @@ function _foot() {
         <span class="qa-foot-name">${escHtml(nombre || 'Sin nombre')}</span>
         ${isFromAuth ? '<span class="qa-foot-badge">cuenta</span>' : ''}
       </div>
-      ${auth.isAdmin() ? `
+      ${auth.hasAdminRights() ? `
       <div class="qa-admin-tools">
         <button class="qa-tool-btn" id="qa-export-json">↓ Exportar datos (JSON)</button>
         <button class="qa-tool-btn qa-tool-blue" id="qa-refresh-local">↺ Actualizar datos locales</button>
@@ -106,7 +106,7 @@ function _paint() {
 function _paintFoot() {
   if (!_footEl) return;
   _footEl.innerHTML = _foot();
-  if (auth.isAdmin()) _wireAdminTools(_footEl);
+  if (auth.hasAdminRights()) _wireAdminTools(_footEl);
 }
 
 function _body() {
@@ -145,7 +145,7 @@ function _body() {
     if (!opciones.length) {
       return `
       <div class="qa-new">
-        <div class="qa-hint">${auth.isAdmin()
+        <div class="qa-hint">${auth.hasAdminRights()
           ? 'Todavía no hay ninguna categoría creada — crea la primera desde Insumos ("+ Nueva categoría") antes de agregar insumos.'
           : 'Todavía no hay ninguna categoría creada. Pide a un administrador que cree al menos una antes de agregar insumos.'}</div>
         <button class="qa-link" id="qa-back">← volver</button>

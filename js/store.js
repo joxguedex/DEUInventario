@@ -4,9 +4,11 @@ import { db }                    from './db.js';
 import { sync, tombstones }      from './sync.js';
 import { auth }                  from './auth.js';
 import { CATALOGO }       from './seed.js';
-import { nowISO, uid, normSearch, catLabel, setCategories, allCategories } from './helpers.js';
+import { nowISO, uid, normSearch, catLabel, catGrupo, setCategories, allCategories } from './helpers.js';
 import { SUPABASE_URL } from './config.js';
 import { DB_SCHEMA } from './env-config.js';
+
+const VIEWING_GRUPO_KEY = 'sibex-viewing-grupo';
 
 function _commHeaders(extra = {}) {
   return auth.authHeaders({
@@ -14,6 +16,13 @@ function _commHeaders(extra = {}) {
     'Content-Profile': DB_SCHEMA,
     ...extra,
   });
+}
+
+function _loadViewingGrupo() {
+  try {
+    const v = localStorage.getItem(VIEWING_GRUPO_KEY);
+    return v ? Number(v) : null;
+  } catch { return null; }
 }
 
 async function _rpc(name, body) {
@@ -33,23 +42,59 @@ async function _rpc(name, body) {
 function _conTag(nombre) {
   if (!nombre) return null;
   const area = auth.area();
-  const tag = auth.isAdmin() ? 'Administrador' : (area ? catLabel(area) : null);
+  const tag = auth.isSuperAdmin() ? 'Super Administrador' : auth.isAdmin() ? 'Administrador' : (area ? catLabel(area) : null);
   return tag ? `${nombre} · ${tag}` : nombre;
 }
 
 export const store = {
   items: [],          // catálogo con cantidad contada
   logs: [],           // bitácora de registros de conteo (append-only)
-  categories: [],      // [{id, nombre}] — categorías vigentes (dinámicas, ver helpers.js)
+  categories: [],      // [{id, nombre, grupo_id}] — categorías vigentes (dinámicas, ver helpers.js)
+  grupos: [],          // [{id, nombre}] — grupos de extensión, solo relevante para super_admin
+  // Grupo que un super_admin eligió mirar (null = "Todos") — persistido para
+  // sobrevivir un refresh. admin/coordinador nunca lo tocan: su alcance ya
+  // viene fijo del servidor (RLS por auth.grupo()).
+  viewingGrupoId: _loadViewingGrupo(),
   contadorNombre: '',
+
+  setViewingGrupo(id) {
+    this.viewingGrupoId = id == null ? null : Number(id);
+    try {
+      if (this.viewingGrupoId == null) localStorage.removeItem(VIEWING_GRUPO_KEY);
+      else localStorage.setItem(VIEWING_GRUPO_KEY, String(this.viewingGrupoId));
+    } catch {}
+  },
+
+  async loadGrupos() {
+    if (!navigator.onLine) return this.grupos;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/grupos?select=id,nombre&order=nombre.asc`, { headers: _commHeaders() });
+      if (res.ok) this.grupos = await res.json();
+    } catch { /* sin red: se queda con lo último cargado */ }
+    return this.grupos;
+  },
+  async createGrupo(nombre) {
+    const id = await _rpc('create_grupo', { p_nombre: nombre });
+    await this.loadGrupos();
+    return id;
+  },
+  async renameGrupo(id, nombre) {
+    await _rpc('update_grupo', { p_id: id, p_nombre: nombre });
+    await this.loadGrupos();
+  },
 
   // ── Categorías (dinámicas — creadas/editadas/borradas por el admin) ────
   // item.categoria guarda el `id` de la categoría (no un string fijo como
   // antes): helpers.js#catLabel/catColor lo resuelven contra este mapa.
+  // Un super_admin con un grupo elegido solo carga las categorías de ESE
+  // grupo (RLS le dejaría ver todas, esto es filtro de UI); admin/
+  // coordinador siempre ven solo las suyas, ya acotadas por RLS.
   async loadCategories() {
     if (!navigator.onLine) return this.categories;
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/categories?select=id,nombre&order=nombre.asc`, { headers: _commHeaders() });
+      let url = `${SUPABASE_URL}/rest/v1/categories?select=id,nombre,grupo_id&order=nombre.asc`;
+      if (auth.isSuperAdmin() && this.viewingGrupoId != null) url += `&grupo_id=eq.${this.viewingGrupoId}`;
+      const res = await fetch(url, { headers: _commHeaders() });
       if (!res.ok) return this.categories;
       this.categories = await res.json();
       setCategories(this.categories);
@@ -57,8 +102,8 @@ export const store = {
     return this.categories;
   },
 
-  async createCategory(nombre) {
-    const id = await _rpc('create_category', { p_nombre: nombre });
+  async createCategory(nombre, grupoId) {
+    const id = await _rpc('create_category', { p_nombre: nombre, p_grupo_id: grupoId ?? null });
     await this.loadCategories();
     return id;
   },
@@ -93,6 +138,7 @@ export const store = {
   async init() {
     this.contadorNombre = localStorage.getItem('ucv-inv-contador') || '';
     if (sync.enabled) await this.loadCategories();
+    if (sync.enabled && auth.isSuperAdmin()) await this.loadGrupos();
 
     // Un insumo fusionado en la nube no debe volver a sembrarse desde seed.js.
     const muertos = tombstones();
@@ -149,6 +195,13 @@ export const store = {
     if (auth.isCoordinador() && !auth.isGeneral()) {
       const area = auth.area();   // id de categoría (string) — ver js/auth.js
       return this.items.filter(i => String(i.categoria) === String(area));
+    }
+    // admin/coordinador general: sin filtro acá — RLS ya les entrega solo lo
+    // de su propio grupo (ver js/sync.js, que delega el filtrado al pull).
+    // super_admin: RLS le deja ver todo; si eligió un grupo puntual (ver
+    // switcher en topnav), se filtra acá del lado del cliente.
+    if (auth.isSuperAdmin() && this.viewingGrupoId != null) {
+      return this.items.filter(i => catGrupo(i.categoria) === this.viewingGrupoId);
     }
     return this.items;
   },
@@ -427,13 +480,15 @@ export const store = {
     if (!data.cuerpo?.trim()) throw new Error('El mensaje es obligatorio');
   },
 
-  // Ya no hay `alcance` que filtrar: GBSInventario dejó de compartir `comms`
-  // con AcopioUCV/UCVComandas al independizarse (ver supabase/new-project-
-  // schema.sql, nota de la revisión 1) — todo comunicado es visible para
-  // cualquier sesión de este sistema.
+  // Separados por grupo de extensión (decisión explícita, ver RLS de
+  // `comms` en supabase/new-project-schema.sql §11.3): admin/coordinador
+  // reciben ya filtrado del servidor; un super_admin con un grupo elegido
+  // en la barra superior agrega el filtro acá del lado del cliente (RLS le
+  // dejaría ver todos, "Todos los grupos" los muestra sin filtrar).
   async loadCommunications() {
     if (!navigator.onLine) throw new Error('Offline');
-    const url = `${SUPABASE_URL}/rest/v1/comms?select=*&order=created_at.desc`;
+    let url = `${SUPABASE_URL}/rest/v1/comms?select=*&order=created_at.desc`;
+    if (auth.isSuperAdmin() && this.viewingGrupoId != null) url += `&grupo_id=eq.${this.viewingGrupoId}`;
     const res = await fetch(url, { headers: _commHeaders() });
     if (!res.ok) throw new Error(`No se pudieron cargar comunicados (${res.status})`);
     const rows = await res.json();
@@ -445,6 +500,7 @@ export const store = {
       autor:    r.autor,
       activo:   r.activo,
       fecha:    r.created_at,
+      grupoId:  r.grupo_id,
     }));
   },
 
@@ -456,6 +512,12 @@ export const store = {
   async saveCommunication(data) {
     this._validateCommunication(data);
     if (!navigator.onLine) throw new Error('Offline');
+    // grupo_id: obligatorio para crear uno nuevo (data.grupoId ausente) —
+    // admin/coordinador siempre en el suyo, super_admin en el elegido en la
+    // barra superior. Al ACTUALIZAR uno existente (p.ej. resolveComm), se
+    // conserva el que ya traía la fila (nunca cambia de grupo).
+    const grupoId = data.grupoId ?? (auth.isSuperAdmin() ? this.viewingGrupoId : auth.grupo());
+    if (grupoId == null) throw new Error('Elegí un grupo de extensión en la barra superior primero.');
 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/comms?on_conflict=id`, {
       method: 'POST',
@@ -468,6 +530,7 @@ export const store = {
         autor:    data.autor,
         activo:   data.activo,
         fecha:    data.fecha ?? Date.now(),
+        grupo_id: grupoId,
       }),
     });
 

@@ -11,10 +11,10 @@
 // navegador las lee directo como archivo/HTML estático, antes de que
 // corra cualquier JS (instalación como PWA / "Agregar a inicio").
 
-export const APP_NAME_BOLD = 'GBS';         // parte del nombre en blanco (topnav)
-export const APP_NAME_REST = 'Inventario';  // parte del nombre en el color principal
+export const APP_NAME_BOLD = 'SIBEX';       // parte del nombre en blanco (topnav)
+export const APP_NAME_REST = ' UCV';        // parte del nombre en el color principal
 export const APP_NAME = APP_NAME_BOLD + APP_NAME_REST;
-export const APP_TITLE = `${APP_NAME} — Gestión de Inventario`;
+export const APP_TITLE = `${APP_NAME} — Sistema de Inventario y Bienes de Extensión`;
 
-// Subtítulo bajo "Centro Operativo" (hero de Resumen, ver views/resumen.js).
-export const HERO_DESCRIPTION = 'Aquí va la ubicación del centro…';
+// Subtítulo bajo "Dirección de Extensión" (hero de Resumen, ver views/resumen.js).
+export const HERO_DESCRIPTION = 'SIBEX — Sistema de Inventario y Bienes de Extensión UCV.';

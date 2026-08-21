@@ -1,4 +1,4 @@
-/* ═══ GBSInventario · plantilla reutilizable ═══ */
+/* ═══ SIBEX UCV · Sistema de Inventario y Bienes de Extensión ═══ */
 :root {
   /* ── MARCA — únicos dos valores a tocar para adaptar la paleta a otra
      organización.
@@ -6,10 +6,10 @@
      falta perseguir un color por todo el CSS. El nombre del sistema y la
      descripción del "Centro Operativo" (Resumen) viven en js/branding.js,
      no acá, porque son texto, no color. */
-  --brand-primary:#F59E0B;   /* naranja — botones/acentos/tabs activos/hero */
-  --brand-secondary:#111827; /* gris oscuro — sidebar/topnav/botones primarios */
+  --brand-primary:#2C93D8;   /* azul cielo — botones/acentos/tabs activos/hero */
+  --brand-secondary:#0E2C4C; /* azul profundo — sidebar/topnav/botones primarios */
 
-  --bg:#F7F5F2; --surface:#FFFFFF; --s2:#F2F0ED;
+  --bg:#F3F8FC; --surface:#FFFFFF; --s2:#EAF2F9;
   --sidebar: var(--brand-secondary);
   --side2: color-mix(in srgb, var(--brand-secondary) 80%, black);
   --amber: var(--brand-primary);
@@ -23,7 +23,7 @@
   /* Fondo de overlays de modal (antes rgba(17,24,39,.55) fijo) — sigue a --brand-secondary. */
   --overlay: color-mix(in srgb, var(--brand-secondary) 55%, transparent);
   --red:#EF4444; --red-bg:#FEF2F2; --green:#10B981; --grn-bg:#ECFDF5; --teal:#0F766E; --blue:#6366F1; --blu-bg:#EEF2FF;
-  --t1:#111827; --t2:#374151; --t3:#6B7280; --t4:#9CA3AF; --bdr:#E5E7EB;
+  --t1:#0F2438; --t2:#3B5570; --t3:#6C8AA3; --t4:#9FB6C8; --bdr:#D9E7F1;
   --sh:0 1px 3px rgba(0,0,0,.05),0 1px 2px rgba(0,0,0,.04);
   --sh-md:0 4px 12px rgba(0,0,0,.08); --sh-lg:0 16px 40px rgba(0,0,0,.12);
   --r:12px; --r-sm:8px; --r-xs:6px; --r-xl:18px;
@@ -91,6 +91,11 @@ input[type=number]{-moz-appearance:textfield}
 .sync-pill.pending .sync-dot{animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 /* pill sobre fondo claro (m-topbar usa dark, así que queda igual) */
+
+/* ── Selector de grupo de extensión (super_admin-only, ver app.js) ── */
+.grupo-switch{-webkit-appearance:none;appearance:none;padding:6px 26px 6px 12px;border-radius:20px;font-size:12px;font-weight:600;font-family:'Space Grotesk',sans-serif;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>') no-repeat right 8px center/11px;background-color:rgba(255,255,255,.08);color:#fff;flex-shrink:0;cursor:pointer;max-width:150px;text-overflow:ellipsis}
+.grupo-switch:hover{background-color:rgba(255,255,255,.14)}
+.grupo-switch option{color:#111827;background:#fff}
 
 /* ── Botón coordinador ── */
 .tn-right{display:flex;align-items:center;gap:10px;flex-shrink:0}

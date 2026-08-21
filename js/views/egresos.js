@@ -12,8 +12,9 @@
 // selector de Solicitante — ver egresorapido.js) se trae embebiendo
 // comandas bajo movements (comandas.movement_id → movements.id).
 
+import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, catColor, catLabel } from '../helpers.js';
+import { escHtml, catColor, catLabel, catGrupo } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
@@ -98,6 +99,8 @@ async function _fetchAll() {
     if (auth.isCoordinador() && !auth.isGeneral()) {
       const area = auth.area();
       logs = logs.filter(l => String(l.categoria) === String(area));
+    } else if (auth.isSuperAdmin() && store.viewingGrupoId != null) {
+      logs = logs.filter(l => catGrupo(l.categoria) === store.viewingGrupoId);
     }
 
     _cache = logs;

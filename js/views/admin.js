@@ -122,13 +122,15 @@ export function renderLoginWall(container) {
 export async function openPanel() {
   if (!auth.isLoggedIn()) return; // sin sesión, el botón no abre nada (el muro ya se muestra)
 
-  if (auth.isAdmin()) await checkpoints.load();
-  const roleLabel = auth.isAdmin() ? 'Administrador' : `Coordinador · ${auth.area() || ''}`;
+  if (auth.hasAdminRights()) await checkpoints.load();
+  const roleLabel = auth.isSuperAdmin() ? 'Super administrador'
+    : auth.isAdmin() ? 'Administrador'
+    : `Coordinador · ${auth.area() || ''}`;
   const ov = modal(`
     <div class="adm-box adm-box-lg">
       <div class="adm-head">
         <div>
-          <div class="adm-title">Panel de ${auth.isAdmin() ? 'administrador' : 'coordinador'}</div>
+          <div class="adm-title">Panel de ${auth.hasAdminRights() ? 'administrador' : 'coordinador'}</div>
           <div class="adm-sub">${escHtml(auth.name())} · ${escHtml(roleLabel)}</div>
         </div>
         <button class="adm-x" data-close>&times;</button>
@@ -192,17 +194,31 @@ export async function openPanel() {
         </form>
       </div>
 
-      ${auth.isAdmin() ? `
+      ${auth.isSuperAdmin() ? `
+      <div class="adm-sec">
+        <div class="adm-sec-top">
+          <span class="adm-sec-title">Grupos de extensión</span>
+        </div>
+        <div class="adm-note" style="margin:0 0 10px;">Cada grupo lleva su propio inventario/usuarios/comunicados, sin ver el de los demás. Elegí uno con el selector de la barra superior para gestionar sus categorías y usuarios.</div>
+        <div class="adm-cp-list" id="adm-grupo-list"></div>
+        <form id="adm-grupo-form" style="display:flex; gap:8px; margin-top:10px;">
+          <input class="adm-field" style="flex:1; margin:0;" id="adm-grupo-nombre" placeholder="Nombre del grupo nuevo" maxlength="100">
+          <button type="submit" class="adm-mini">+ Agregar</button>
+        </form>
+      </div>` : ''}
+
+      ${auth.hasAdminRights() ? `
       <div class="adm-sec">
         <div class="adm-sec-top">
           <span class="adm-sec-title">Categorías de insumos</span>
         </div>
-        <div class="adm-note" style="margin:0 0 10px;">Cada categoría es el "área" que puede tener un coordinador. Borrar una le quita el acceso a sus coordinadores de inmediato (quedan sin rol asignado, sin perder su registro).</div>
+        <div class="adm-note" style="margin:0 0 10px;">Cada categoría es el "área" que puede tener un coordinador. Borrar una le quita el acceso a sus coordinadores de inmediato (quedan sin rol asignado, sin perder su registro).${auth.isSuperAdmin() ? ' Se crean dentro del grupo elegido en la barra superior.' : ''}</div>
+        ${auth.isSuperAdmin() && store.viewingGrupoId == null ? `<div class="adm-note">Elegí un grupo de extensión en la barra superior para ver/crear sus categorías.</div>` : `
         <div class="adm-cp-list" id="adm-cat-list"></div>
         <form id="adm-cat-form" style="display:flex; gap:8px; margin-top:10px;">
           <input class="adm-field" style="flex:1; margin:0;" id="adm-cat-nombre" placeholder="Nombre de la categoría nueva" maxlength="100">
           <button type="submit" class="adm-mini">+ Agregar</button>
-        </form>
+        </form>`}
       </div>
 
       <div class="adm-sec">
@@ -216,7 +232,11 @@ export async function openPanel() {
       <button class="adm-btn" id="adm-logout">Cerrar sesión</button>
     </div>`);
 
-  if (auth.isAdmin()) { _paintCpList(ov); _wireCategorias(ov); }
+  if (auth.hasAdminRights()) {
+    _paintCpList(ov);
+    if (!auth.isSuperAdmin() || store.viewingGrupoId != null) _wireCategorias(ov);
+  }
+  if (auth.isSuperAdmin()) _wireGrupos(ov);
   _cargarPerfil(ov);
 
   ov.querySelector('#adm-prof-form').addEventListener('submit', _guardarPerfil);
@@ -309,8 +329,83 @@ async function _cambiarPassword(e) {
   }
 }
 
-// ── Categorías (admin-only, ver update_product_category/create_category/
-// update_category/delete_category en supabase/new-project-schema.sql §8b) ──
+// ── Grupos de extensión (super_admin-only, ver create_grupo/update_grupo en
+// supabase/new-project-schema.sql §8b) ──
+async function _wireGrupos(ov) {
+  await store.loadGrupos();
+  _paintGrupoList(ov);
+
+  ov.querySelector('#adm-grupo-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const inp = ov.querySelector('#adm-grupo-nombre');
+    const nombre = inp.value.trim();
+    if (!nombre) return;
+    try {
+      await store.createGrupo(nombre);
+      inp.value = '';
+      _paintGrupoList(ov);
+      _refreshGrupoSwitch();
+      toast.ok('Grupo creado.');
+    } catch (ex) {
+      toast.err(ex.message || 'No se pudo crear el grupo.');
+    }
+  });
+}
+
+function _paintGrupoList(ov) {
+  const box = ov.querySelector('#adm-grupo-list');
+  if (!box) return;
+  if (!store.grupos.length) { box.innerHTML = `<div class="adm-cp-empty">Sin grupos todavía — crea el primero abajo.</div>`; return; }
+
+  const grupos = [...store.grupos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  box.innerHTML = grupos.map(g => `
+    <div class="adm-cp" data-id="${g.id}">
+      <div class="adm-cp-info">
+        <div class="adm-cp-date">${escHtml(g.nombre)}</div>
+      </div>
+      <button class="adm-mini" data-rename-grupo="${g.id}">Renombrar</button>
+    </div>`).join('');
+
+  box.querySelectorAll('[data-rename-grupo]').forEach(b => b.addEventListener('click', async () => {
+    const g = store.grupos.find(x => String(x.id) === b.dataset.renameGrupo);
+    const nuevo = await promptDialog({
+      title: 'Renombrar grupo de extensión',
+      label: 'Nuevo nombre',
+      value: g?.nombre || '',
+      confirmText: 'Renombrar',
+    });
+    if (nuevo == null) return;
+    const val = nuevo.trim();
+    if (!val || val === g.nombre) return;
+    try {
+      await store.renameGrupo(g.id, val);
+      _paintGrupoList(ov);
+      _refreshGrupoSwitch();
+      toast.ok('Grupo renombrado.');
+    } catch (ex) {
+      toast.err(ex.message || 'No se pudo renombrar el grupo.');
+    }
+  }));
+}
+
+// Repinta el selector de grupo del topnav (app.js) tras crear/renombrar uno
+// — evita esperar al próximo re-render completo para verlo reflejado.
+function _refreshGrupoSwitch() {
+  const opts = `<option value="">Todos los grupos</option>` +
+    store.grupos.map(g => `<option value="${g.id}">${escHtml(g.nombre)}</option>`).join('');
+  ['grupo-switch', 'grupo-switch-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = opts;
+    el.value = store.viewingGrupoId ?? '';
+  });
+}
+
+// ── Categorías (admin/super_admin, ver update_product_category/
+// create_category/update_category/delete_category en
+// supabase/new-project-schema.sql §8b) — un super_admin siempre actúa
+// dentro del grupo elegido en la barra superior (store.viewingGrupoId, ya
+// validado antes de llegar acá: ver el `if` en openPanel()).
 async function _wireCategorias(ov) {
   await store.loadCategories();
   _paintCatList(ov);
@@ -321,7 +416,7 @@ async function _wireCategorias(ov) {
     const nombre = inp.value.trim();
     if (!nombre) return;
     try {
-      await store.createCategory(nombre);
+      await store.createCategory(nombre, auth.isSuperAdmin() ? store.viewingGrupoId : undefined);
       inp.value = '';
       _paintCatList(ov);
       toast.ok('Categoría creada.');

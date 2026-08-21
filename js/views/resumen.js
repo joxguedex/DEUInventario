@@ -73,10 +73,10 @@ function _paint() {
       <div class="hero">
         <div class="hero-wm" aria-hidden="true">${escHtml(APP_NAME_BOLD)}</div>
         <div class="hero-left">
-          <div class="hero-eyebrow">Estado del Centro</div>
+          <div class="hero-eyebrow">Estado de la Dirección</div>
           <div class="hero-h">
-            <span class="hl-fill">Centro</span>
-            <span class="hl-outline">Operativo</span>
+            <span class="hl-fill">Dirección</span>
+            <span class="hl-outline">de Extensión</span>
           </div>
           <div class="hero-sub">${escHtml(HERO_DESCRIPTION)}</div>
           <div class="hero-pills">

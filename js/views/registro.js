@@ -5,7 +5,7 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, catColor, localDate } from '../helpers.js';
+import { escHtml, catColor, catGrupo, localDate } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
@@ -121,10 +121,15 @@ export async function renderRegistro(rootEl) {
 
   // Un coordinador solo ve movimientos de su propia área (misma regla de
   // visibilidad que el catálogo, ver store.js#visibleItems()); admin y el
-  // coordinador de "General" (auth.isGeneral()) ven todo.
+  // coordinador de "General" ya vienen acotados a su propio grupo del lado
+  // del servidor (RLS). Un super_admin con un grupo elegido en la barra
+  // superior filtra acá, del lado del cliente (mismo criterio que
+  // store.js#visibleItems()).
   if (auth.isCoordinador() && !auth.isGeneral()) {
     const area = auth.area();
     logs = logs.filter(l => String(l.categoria) === String(area));
+  } else if (auth.isSuperAdmin() && store.viewingGrupoId != null) {
+    logs = logs.filter(l => catGrupo(l.categoria) === store.viewingGrupoId);
   }
 
   _allLogs = logs.sort((a, b) => (a.ts < b.ts ? 1 : -1));

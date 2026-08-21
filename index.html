@@ -10,12 +10,12 @@
      manifest.json e icon.svg SÍ hay que editarlos a mano al rebrandear (son
      estáticos, leídos por el navegador/SO antes de que exista una página —
      ver comentario en branding.js). -->
-<title>GBSInventario — Gestión de Inventario</title>
-<meta name="theme-color" content="#111827" id="theme-color-meta">
+<title>SIBEX UCV — Sistema de Inventario y Bienes de Extensión</title>
+<meta name="theme-color" content="#0E2C4C" id="theme-color-meta">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="GBSInventario">
+<meta name="apple-mobile-web-app-title" content="SIBEX UCV">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
@@ -50,6 +50,9 @@
     <button class="tn-item" data-page="voluntarios">Usuarios</button>
   </nav>
   <div class="tn-right">
+    <!-- Solo visible para super_admin (ver app.js#applyRBAC) — elige qué
+         grupo de extensión mirar; "Todos los grupos" ve todo sin filtrar. -->
+    <select class="grupo-switch" id="grupo-switch" title="Grupo de extensión" style="display:none"></select>
     <div class="sync-pill local" id="sync-pill" title="Sincronizar">
       <div class="sync-dot"></div><span id="sync-label">Solo local</span>
     </div>
@@ -64,6 +67,7 @@
 <div class="m-topbar">
   <span class="m-brand"><span id="brand-bold-m">GBS</span><span class="m-brand-rest" id="brand-rest-m">Inventario</span> <span id="version-badge-m" class="version-badge"></span></span>
   <div style="display:flex;align-items:center;gap:8px">
+    <select class="grupo-switch" id="grupo-switch-m" title="Grupo de extensión" style="display:none"></select>
     <div class="sync-pill local" id="sync-pill-m">
       <div class="sync-dot"></div><span id="sync-label-m">Local</span>
     </div>

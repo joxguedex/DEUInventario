@@ -86,7 +86,7 @@ function _paintTabs() {
   box.innerHTML = `
     <div class="tab ${_cat === 'todos' ? 'active' : ''}" data-cat="todos">Todos</div>
     ${cats.map(c => `<div class="tab ${String(_cat) === String(c.id) ? 'active' : ''}" data-cat="${escHtml(c.id)}">${escHtml(c.nombre)}</div>`).join('')}
-    ${auth.isAdmin() ? `<div class="tab tab-add" id="cnt-new-cat">+ categoría</div>` : ''}`;
+    ${auth.hasAdminRights() ? `<div class="tab tab-add" id="cnt-new-cat">+ categoría</div>` : ''}`;
 }
 
 function _wireControls() {
@@ -311,7 +311,7 @@ function _openEditItem(id) {
   if (!it) return;
   let target = null; // insumo elegido del buscador de nombre para fusionar
 
-  const isAdmin = auth.isAdmin();
+  const isAdmin = auth.hasAdminRights();
   const catOptions = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
     .map(c => `<option value="${c.id}" ${String(c.id) === String(it.categoria) ? 'selected' : ''}>${escHtml(c.nombre)}</option>`).join('');
 
@@ -472,12 +472,18 @@ function _openEditItem(id) {
   setTimeout(() => { nombreInp.focus(); nombreInp.select(); }, 50);
 }
 
-// ── "+ categoría" (admin-only) — atajo rápido sin salir de Insumos.
+// ── "+ categoría" (admin/super_admin) — atajo rápido sin salir de Insumos.
 // La gestión completa (renombrar/borrar) vive en el panel de administrador
 // (ver views/admin.js#_wireCategorias); acá solo se resuelve el caso más
-// común: falta una categoría para poder clasificar el próximo insumo.
+// común: falta una categoría para poder clasificar el próximo insumo. Un
+// super_admin necesita haber elegido un grupo en la barra superior primero
+// (una categoría siempre pertenece a un solo grupo).
 function _openNewCategoria() {
-  if (!auth.isAdmin()) return;
+  if (!auth.hasAdminRights()) return;
+  if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
+    toast.err('Elegí un grupo de extensión en la barra superior primero.');
+    return;
+  }
 
   const ov = _renModal(`
     <div class="adm-box">
@@ -502,7 +508,7 @@ function _openNewCategoria() {
     const val = inp.value.trim();
     if (!val) { err.textContent = 'Escribe un nombre.'; return; }
     try {
-      await store.createCategory(val);
+      await store.createCategory(val, auth.isSuperAdmin() ? store.viewingGrupoId : undefined);
       _closeRen();
       toast.ok(`Categoría "${val}" creada.`);
       _paintTabs();

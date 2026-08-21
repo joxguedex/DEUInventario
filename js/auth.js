@@ -62,6 +62,8 @@ export const auth = {
 
     const role = session.user.app_metadata?.role || '';
     const area = session.user.app_metadata?.area ?? null;
+    const grupoIdRaw = session.user.app_metadata?.grupo_id;
+    const grupoId = grupoIdRaw == null ? null : Number(grupoIdRaw);
     let profile = null;
 
     try {
@@ -89,7 +91,7 @@ export const auth = {
       userId: session.user.id,
       accessToken: session.access_token,
       email: session.user.email,
-      role, area,
+      role, area, grupoId,
       ...profile,
     };
   },
@@ -98,21 +100,32 @@ export const auth = {
   ci()        { return this.session?.ci ?? null; },
   role()      { return this.session?.role || ''; },
   area()      { return this.session?.area ?? null; },   // id de categoría (string), o 'general'
+  // Grupo de extensión de la sesión — null para super_admin (no tiene uno
+  // propio, ve todos) y para cualquier sesión sin grupo asignado.
+  grupo()     { return this.session?.grupoId ?? null; },
   name()      { return this.session ? `${this.session.name || ''} ${this.session.surname || ''}`.trim() : ''; },
 
+  // isAdmin() es a propósito DISTINTO de isSuperAdmin() acá (a diferencia
+  // del is_admin() de SQL, que los junta para simplificar RLS) — el cliente
+  // necesita distinguir las dos UIs: un admin de grupo no ve el panel/
+  // switcher de Grupos, un super_admin sí. hasAdminRights() es el atajo
+  // para los sitios que antes gateaban con isAdmin() pensando en "cualquier
+  // admin" (nav "Usuarios", canEditInventory(), hasPlatformAccess()).
   isAdmin()       { return this.role() === 'admin'; },
+  isSuperAdmin()  { return this.role() === 'super_admin'; },
+  hasAdminRights() { return this.isAdmin() || this.isSuperAdmin(); },
   isCoordinador() { return this.role() === 'coordinador'; },
   // Coordinador del área especial "general": sin categoría propia, consulta
-  // el catálogo completo pero no puede modificarlo — ver canEditInventory()
-  // y store.js#visibleItems().
+  // el catálogo completo de su grupo pero no puede modificarlo — ver
+  // canEditInventory() y store.js#visibleItems().
   isGeneral()     { return this.isCoordinador() && this.area() === 'general'; },
-  canEditInventory() { return this.isAdmin() || (this.isCoordinador() && !this.isGeneral()); },
+  canEditInventory() { return this.hasAdminRights() || (this.isCoordinador() && !this.isGeneral()); },
 
-  // Ya no hay áreas "denegadas por pertenecer a otro sistema" (GBSInventario
-  // es independiente desde la migración a esquema propio): cualquier sesión
-  // con rol admin/coordinador tiene acceso — ese rol solo lo fija la Edge
-  // Function (manage-users), nunca el propio usuario ni el cliente.
-  hasPlatformAccess() { return this.isAdmin() || this.isCoordinador(); },
+  // Cualquier sesión con rol admin/coordinador/super_admin tiene acceso —
+  // ese rol solo lo fija la Edge Function (manage-users) o, para
+  // super_admin, un bootstrap manual contra la base, nunca el propio
+  // usuario ni el cliente.
+  hasPlatformAccess() { return this.hasAdminRights() || this.isCoordinador(); },
 
   // Headers para requests REST/RPC directos (fetch) del resto de la app —
   // manda el access_token real de la sesión (para que auth.uid()/auth.jwt()
@@ -130,9 +143,10 @@ export const auth = {
   },
 
   async login(email, password) {
-    if (!this.enabled) return { ok: false, error: 'Conecta la base de datos primero.' };
     email = (email || '').trim();
     if (!email || !password) return { ok: false, error: 'Escribe correo y contraseña.' };
+
+    if (!this.enabled) return { ok: false, error: 'Conecta la base de datos primero.' };
 
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
     if (error || !data?.session) return { ok: false, error: 'Correo o contraseña incorrectos.' };

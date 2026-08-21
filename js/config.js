@@ -1,15 +1,16 @@
 // ============================================================
 // GBSInventario · Configuración de Supabase
 // ------------------------------------------------------------
-// Proyecto propio e independiente (qbwrtswkmwzpbmhkzxdh) — desde la
-// migración a esquema nuevo (ver supabase/new-project-schema.sql), ya no
-// comparte base con AcopioUCV/UCVComandas. Esquema en `public` (ver
-// js/env-config.js), con Supabase Auth real (js/auth.js) en vez del login
-// propio sin JWT que usaba el proyecto compartido viejo.
+// Proyecto compartido con UCVAcopio/UCVComandas (fndrmxjykrtoddhstbyv), pero
+// AISLADO en su propio schema de Postgres (`sibex`, ver js/env-config.js y
+// supabase/sibex-schema-install.sql) en vez de `public` — así no se mezclan
+// tablas/datos con esos sistemas hermanos aunque compartan el mismo
+// proyecto/base. Supabase Auth real (js/auth.js), no el login propio sin
+// JWT que usaba el esquema viejo de este mismo proyecto.
 // ============================================================
 
-export const SUPABASE_URL = 'https://qbwrtswkmwzpbmhkzxdh.supabase.co';
-export const SUPABASE_KEY = 'sb_publishable_TWoAoZ3gSGF0O_XfROpUrg_AWVJmg-4';
+export const SUPABASE_URL = 'https://fndrmxjykrtoddhstbyv.supabase.co';
+export const SUPABASE_KEY = 'sb_publishable_o48z5n8Gad0DFLW7an4qxw_Pf-UGlzL';
 
 // products (name+category_id+umbral+unidad+client_id), inventory
 // (qnty/last_counted_at/last_counted_by derivados por trigger/RPC) y los RPC

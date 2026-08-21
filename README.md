@@ -1,4 +1,4 @@
-# GBSInventario — Gestión de Inventario
+# SIBEX UCV — Sistema de Inventario y Bienes de Extensión
 
 PWA (Progressive Web App) en JavaScript vanilla — sin framework, sin
 bundler — para gestionar el inventario de insumos de una organización:

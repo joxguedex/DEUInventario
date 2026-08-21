@@ -12,14 +12,21 @@ import { auth } from '../auth.js';
 import { uid, escHtml, timeAgo, catLabel } from '../helpers.js';
 
 // "Publicado por" no es texto libre: se arma solo de la sesión activa. Un
-// admin no tiene área (siempre null) — de ahí el caso especial. Un
-// coordinador tiene como área el id de una categoría, o 'general'
+// admin/super_admin no tiene área (siempre null) — de ahí el caso especial.
+// Un coordinador tiene como área el id de una categoría, o 'general'
 // (coordinador sin categoría propia).
 function _areaLabel() {
+  if (auth.isSuperAdmin()) return 'Super Administrador';
   if (auth.isAdmin()) return 'Administrador';
   const area = auth.area();
   if (area === 'general') return 'General';
   return catLabel(area);
+}
+
+// Nombre del grupo de un comunicado — solo se muestra cuando un super_admin
+// está viendo "Todos los grupos" (con uno elegido ya es obvio de cuál son).
+function _grupoNombre(grupoId) {
+  return store.grupos.find(g => g.id === grupoId)?.nombre || null;
 }
 
 function _computeAutor() {
@@ -44,15 +51,18 @@ function tlItem(c) {
             : c.urgencia === 'urgente' ? `${ICO.clock} Urgente`
             : `${ICO.info} Info`;
   const resolved  = !c.activo ? '<span class="tag tag-gray" style="margin-left:4px">Resuelto</span>' : '';
-  const actionBtn = c.activo && auth.isAdmin()
+  const actionBtn = c.activo && auth.hasAdminRights()
     ? `<button class="btn btn-ghost btn-sm" data-action="resolve-comm" data-id="${escHtml(c.id)}">Marcar resuelto</button>`
     : '';
+  const grupoNombre = auth.isSuperAdmin() && store.viewingGrupoId == null ? _grupoNombre(c.grupoId) : null;
+  const grupoTag = grupoNombre ? `<span class="tag tag-blue" style="margin-left:4px">${escHtml(grupoNombre)}</span>` : '';
   return `<div class="tl-item ${c.urgencia}">
     <div class="tl-dot"></div>
     <div class="tl-card" style="${!c.activo ? 'opacity:0.65' : ''}">
       <div class="tl-top">
         <span class="tag ${tc}">${tl}</span>
         ${resolved}
+        ${grupoTag}
         <span class="tl-title">${escHtml(c.titulo)}</span>
         <span class="tl-time">${timeAgo(c.fecha)}</span>
       </div>
@@ -111,8 +121,13 @@ async function resolveComm(id) {
 }
 
 // Prepara el modal cada vez que se abre: autor recalculado (por si cambió de
-// cuenta en el mismo dispositivo).
+// cuenta en el mismo dispositivo). Un super_admin necesita haber elegido un
+// grupo en la barra superior primero (todo comunicado pertenece a uno).
 function _openNewCommModal() {
+  if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
+    toast.err('Elegí un grupo de extensión en la barra superior primero.');
+    return;
+  }
   const autorEl = document.getElementById('ca');
   if (autorEl) autorEl.value = _computeAutor();
   modal.open('m-comm');

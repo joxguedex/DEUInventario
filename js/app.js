@@ -92,6 +92,34 @@ async function nav(page) {
   if (page === 'voluntarios') renderVoluntarios(pages.voluntarios);
 }
 
+// Pinta las opciones del selector de grupo (super_admin-only) con lo que
+// haya en store.grupos + "Todos los grupos", y sincroniza el valor
+// seleccionado con store.viewingGrupoId (persistido, ver store.js).
+function _paintGrupoSwitch() {
+  const opts = `<option value="">Todos los grupos</option>` +
+    store.grupos.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('');
+  ['grupo-switch', 'grupo-switch-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = opts;
+    el.value = store.viewingGrupoId ?? '';
+  });
+}
+
+// Cambiar de grupo solo mueve un filtro del lado del cliente (RLS ya le
+// deja ver todo a un super_admin) — no hace falta re-sincronizar, alcanza
+// con recargar categorías (acotadas al grupo elegido, ver
+// store.js#loadCategories) y repintar la página activa.
+async function _onGrupoChange(rawValue) {
+  store.setViewingGrupo(rawValue === '' ? null : Number(rawValue));
+  ['grupo-switch', 'grupo-switch-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = store.viewingGrupoId ?? '';
+  });
+  await store.loadCategories();
+  await nav(_current);
+}
+
 function applyRBAC() {
   document.querySelectorAll('.tn-item, .mbn-item').forEach(el => { el.style.display = ''; });
   const authBtn = document.getElementById('auth-btn');
@@ -99,12 +127,21 @@ function applyRBAC() {
   if (authBtn) authBtn.style.display = '';
   if (authBtnM) authBtnM.style.display = '';
 
-  // "Usuarios" (Gestión de Accesos) es admin-only del lado del servidor
-  // (voluntarios.js#renderVoluntarios ya mostraba un mensaje en vez del hub
-  // para cualquier otra cuenta) — se oculta también la pestaña entera acá,
-  // ya que dejarla visible sin uso real solo genera confusión.
+  // "Usuarios" (Gestión de Accesos) es admin/super_admin-only del lado del
+  // servidor (voluntarios.js#renderVoluntarios ya mostraba un mensaje en vez
+  // del hub para cualquier otra cuenta) — se oculta también la pestaña
+  // entera acá, ya que dejarla visible sin uso real solo genera confusión.
   document.querySelectorAll('.tn-item[data-page="voluntarios"], .mbn-item[data-page="voluntarios"]')
-    .forEach(el => { el.style.display = auth.isAdmin() ? '' : 'none'; });
+    .forEach(el => { el.style.display = auth.hasAdminRights() ? '' : 'none'; });
+
+  // Selector de grupo de extensión: exclusivo de super_admin — un admin/
+  // coordinador ya tiene su grupo fijo del lado del servidor, no hay nada
+  // que elegir.
+  ['grupo-switch', 'grupo-switch-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = auth.isSuperAdmin() ? '' : 'none';
+  });
+  if (auth.isSuperAdmin()) _paintGrupoSwitch();
 
   // El coordinador del área "General" solo consulta el inventario (nunca lo
   // modifica, ver auth.js#canEditInventory()): la pestaña "Ingreso Rápido"
@@ -270,6 +307,9 @@ async function boot() {
 
   document.querySelectorAll('.m-subnav-btn').forEach(b =>
     b.addEventListener('click', () => nav(b.dataset.subpage)));
+
+  ['grupo-switch', 'grupo-switch-m'].forEach(id =>
+    document.getElementById(id)?.addEventListener('change', e => _onGrupoChange(e.target.value)));
 
   // Enlaces "Ver todo" (p.ej. Resumen → Insumos/Comunicados, portado de
   // UCVAcopio/js/router.js) — delegado en document porque estos enlaces

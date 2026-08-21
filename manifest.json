@@ -1,11 +1,11 @@
 {
-  "name": "GBSInventario — Gestión de Inventario",
-  "short_name": "GBSInventario",
-  "description": "Gestión de inventario, ingresos y egresos de insumos.",
+  "name": "SIBEX UCV — Sistema de Inventario y Bienes de Extensión",
+  "short_name": "SIBEX UCV",
+  "description": "Sistema de Inventario y Bienes de Extensión de la Dirección de Extensión UCV.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#F7F5F2",
-  "theme_color": "#111827",
+  "background_color": "#F3F8FC",
+  "theme_color": "#0E2C4C",
   "orientation": "portrait-primary",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }

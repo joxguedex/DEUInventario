@@ -30,13 +30,29 @@ import { confirmDialog } from '../components/confirm.js';
 
 const PHONE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
 
-function _areaOptionsHTML() {
-  const categorias = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+function _areaOptionsHTML(categorias = store.categories) {
+  const cats = [...categorias].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   return `
     <option value="general">General (solo consulta + despacho de cualquier área)</option>
     <optgroup label="Coordinación por categoría (Despachos)">
-      ${categorias.map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
+      ${cats.map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
     </optgroup>`;
+}
+
+// Categorías de un grupo puntual — para el modal de editar usuario, un
+// super_admin puede estar editando a alguien de OTRO grupo distinto del que
+// tiene elegido en la barra superior (list_users_with_access le muestra
+// todos los grupos a la vez); store.categories solo trae el grupo elegido
+// (o ninguno si eligió "Todos"), así que hace falta pedirlas aparte.
+async function _categoriasDeGrupo(grupoId) {
+  if (!auth.isSuperAdmin() || grupoId === store.viewingGrupoId) return store.categories;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/categories?select=id,nombre&grupo_id=eq.${grupoId}&order=nombre.asc`,
+      { headers: _rpcHeaders() }
+    );
+    return res.ok ? await res.json() : [];
+  } catch { return []; }
 }
 
 function _rpcHeaders(extra = {}) {
@@ -74,21 +90,49 @@ function _areaLabel(area) {
 let _lastUsers = [];
 
 export function renderVoluntarios(container) {
-  if (!auth.isAdmin()) {
+  if (!auth.hasAdminRights()) {
     container.innerHTML = `
       <div class="reg-wrap"><div class="reg-empty">
         <div class="reg-empty-t">Solo para administradores</div>
-        <div class="reg-empty-s">La gestión de accesos es exclusiva del administrador del sistema.</div>
+        <div class="reg-empty-s">La gestión de accesos es exclusiva de administradores.</div>
       </div></div>`;
     return;
   }
+
+  if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
+    container.innerHTML = `
+      <div class="reg-wrap"><div class="reg-empty">
+        <div class="reg-empty-t">Elegí un grupo de extensión</div>
+        <div class="reg-empty-s">Usá el selector de la barra superior para elegir en qué grupo crear/editar usuarios. La lista de abajo sigue mostrando los de todos los grupos.</div>
+      </div></div>
+      <div class="reg-wrap" style="margin-top:16px;">
+        <div class="cnt-topcard">
+          <div class="ctc-progress-head"><span class="ctc-progress-title">Usuarios con acceso</span></div>
+          <div class="reg-list" id="vol-list" style="margin-top:14px;">
+            <div class="reg-empty"><span class="reg-empty-t">Cargando usuarios...</span></div>
+          </div>
+        </div>
+      </div>`;
+    loadVolunteers(container);
+    return;
+  }
+
+  const roleFieldHTML = auth.isSuperAdmin() ? `
+    <div class="adm-field" style="width:170px;">
+      <label>Rol</label>
+      <select id="vol-role" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
+        <option value="coordinador">Coordinador</option>
+        <option value="admin">Administrador del grupo</option>
+      </select>
+    </div>` : '';
 
   container.innerHTML = `
     <div class="reg-wrap">
       <div class="cnt-topcard">
         <div class="ctc-progress-head"><span class="ctc-progress-title">Otorgar acceso</span></div>
-        <div class="adm-note" style="margin:6px 0 14px;">Crea la persona y su inicio de sesión en un solo paso. El rol siempre es Coordinador — un admin nuevo se crea directo contra la base, nunca desde acá.</div>
+        <div class="adm-note" style="margin:6px 0 14px;">Crea la persona y su inicio de sesión en un solo paso${auth.isSuperAdmin() ? ', dentro del grupo elegido en la barra superior' : ''}. ${auth.isSuperAdmin() ? 'Un super administrador nunca se crea desde acá.' : 'El rol siempre es Coordinador — un admin nuevo lo crea un super administrador.'}</div>
         <form id="vol-form" class="adm-cp-list" style="gap: 12px;">
+          ${roleFieldHTML}
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <div class="adm-field" style="flex:1; min-width:140px;">
               <label>Cédula</label>
@@ -125,7 +169,7 @@ export function renderVoluntarios(container) {
               <input type="password" id="vol-pass" required minlength="6" placeholder="Mínimo 6 caracteres">
             </div>
           </div>
-          <div class="adm-field">
+          <div class="adm-field" id="vol-area-field">
             <label>Área</label>
             <select id="vol-area" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
               ${_areaOptionsHTML()}
@@ -196,6 +240,13 @@ export function renderVoluntarios(container) {
       </div>
     </div>`;
 
+  // El rol "Administrador del grupo" no usa área (esa es cosa de
+  // coordinador) — se oculta el campo en vez de dejarlo mandar un valor sin
+  // sentido (ver grantLogin en la Edge Function, que ya lo ignora igual).
+  container.querySelector('#vol-role')?.addEventListener('change', (e) => {
+    container.querySelector('#vol-area-field').style.display = e.target.value === 'admin' ? 'none' : '';
+  });
+
   container.querySelector('#vol-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = container.querySelector('#vol-submit');
@@ -209,6 +260,8 @@ export function renderVoluntarios(container) {
       const email = container.querySelector('#vol-email').value.trim();
       const password = container.querySelector('#vol-pass').value;
       const area = container.querySelector('#vol-area').value;
+      const role = container.querySelector('#vol-role')?.value || 'coordinador';
+      const grupoId = auth.isSuperAdmin() ? store.viewingGrupoId : undefined;
 
       // Paso 1: la persona (RPC normal). Si ya existe (p.ej. la creó un
       // coordinador desde Egreso Rápido), create_person la actualiza — no
@@ -216,10 +269,11 @@ export function renderVoluntarios(container) {
       await _rpc('create_person', {
         p_ci: ci, p_name: nombre, p_surname: apellido,
         p_phone_company_code: phoneCode, p_phone_number: phoneNum,
+        p_grupo_id: grupoId,
       });
 
       // Paso 2: el acceso en sí (Edge Function, Admin API).
-      await _edgeFn('grant_login', { ci, email, password, area });
+      await _edgeFn('grant_login', { ci, email, password, area, role, grupo_id: grupoId });
 
       toast.ok('Usuario creado y con acceso.');
       container.querySelector('#vol-form').reset();
@@ -276,9 +330,16 @@ export function renderVoluntarios(container) {
     }
   });
 
-  window.editVolunteer = function (ci) {
+  // "Editar" solo se ofrece para coordinador (ver _paintList más abajo) —
+  // el área de un admin no es editable acá (update_area la rechaza siempre,
+  // no aplica: un admin no tiene categoría propia). Async porque el <select>
+  // de área puede necesitar pedir las categorías de OTRO grupo distinto del
+  // elegido en la barra superior (ver _categoriasDeGrupo).
+  window.editVolunteer = async function (ci) {
     const v = _lastUsers.find(u => u.ci === ci);
     if (!v) return;
+    const cats = await _categoriasDeGrupo(v.grupo_id);
+    container.querySelector('#vol-edit-area').innerHTML = _areaOptionsHTML(cats);
     container.querySelector('#vol-edit-ci').value = v.ci;
     container.querySelector('#vol-edit-cedula').value = v.ci;
     container.querySelector('#vol-edit-nombre').value = v.name || '';
@@ -344,6 +405,13 @@ async function loadVolunteers(container) {
 
     listEl.innerHTML = data.map(v => {
       const nombreEsc = (v.name || '').replace(/'/g, "\\'") + ' ' + (v.surname || '').replace(/'/g, "\\'");
+      // "Editar" (nombre/correo/ÁREA) no aplica a un admin — un admin no
+      // tiene categoría propia y update_area lo rechaza siempre del lado
+      // del servidor; activar/desactivar y revocar sí funcionan igual.
+      const puedeEditar = v.role !== 'admin' && v.role !== 'super_admin';
+      const grupoBadge = auth.isSuperAdmin()
+        ? `<span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--blu-bg); color:var(--blue);">${escHtml(v.grupo_nombre || '—')}</span>`
+        : '';
       return `
       <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; margin-bottom:10px; background:var(--s1,#fff); border:1px solid var(--bdr); border-radius:12px; gap:12px; ${v.active === false ? 'opacity:.6' : ''}">
         <div style="flex:1; min-width:0;">
@@ -353,12 +421,13 @@ async function loadVolunteers(container) {
           </div>
           <div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap; align-items:center;">
             <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--s2); border:1px solid var(--bdr);">${ROLE_LABEL[v.role] || v.role}</span>
-            <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--s2); border:1px solid var(--bdr);">${escHtml(_areaLabel(v.area))}</span>
+            ${grupoBadge}
+            ${v.role === 'admin' ? '' : `<span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--s2); border:1px solid var(--bdr);">${escHtml(_areaLabel(v.area))}</span>`}
             <span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; ${v.active === false ? 'background:var(--red-bg);color:var(--red)' : 'background:var(--grn-bg,#ECFDF5);color:var(--green)'}">${v.active === false ? 'Inactivo' : 'Activo'}</span>
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0;">
-          <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--s2); border:1px solid var(--bdr); cursor:pointer; color:inherit; white-space:nowrap;" onclick="window.editVolunteer(${v.ci})">Editar</button>
+          ${puedeEditar ? `<button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--s2); border:1px solid var(--bdr); cursor:pointer; color:inherit; white-space:nowrap;" onclick="window.editVolunteer(${v.ci})">Editar</button>` : ''}
           <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--s2); border:1px solid var(--bdr); cursor:pointer; color:inherit; white-space:nowrap;" onclick="window.toggleActiveVolunteer(${v.ci}, ${v.active === false}, '${nombreEsc}')">${v.active === false ? 'Activar' : 'Desactivar'}</button>
           <button style="padding:7px 14px; font-size:12px; font-weight:600; border-radius:8px; background:var(--red-bg); border:1px solid #FCA5A5; color:var(--red); cursor:pointer; white-space:nowrap;" onclick="window.revokeVolunteer(${v.ci}, '${nombreEsc}')">Revocar</button>
         </div>
