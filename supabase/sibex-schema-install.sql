@@ -1846,7 +1846,18 @@ end $$;
 --      `authenticated` puede ejecutar el statement. `anon` no recibe nada:
 --      GBSInventario ya no tiene una vista "sin sesión" (ver auth.js#
 --      hasPlatformAccess() del sistema viejo, que exigía login para TODO).
+--
+--      service_role (la Admin API que usa supabase/functions/manage-users)
+--      TAMBIÉN necesita estos GRANTS explícitos acá — a diferencia de
+--      `public`, un schema nuevo como `sibex` no le da acceso automático
+--      por default (bypassa RLS, pero no bypassa GRANT/REVOKE). Sin esto,
+--      cualquier llamada de manage-users contra `sibex` falla con
+--      "permission denied for schema sibex" (42501).
 -- ══════════════════════════════════════════════════════════════════════════
+
+grant usage on schema sibex to service_role;
+grant select, insert, update, delete on all tables in schema sibex to service_role;
+grant usage, select on all sequences in schema sibex to service_role;
 
 grant usage on schema sibex to authenticated;
 grant select on all tables in schema sibex to authenticated;

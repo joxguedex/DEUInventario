@@ -1897,7 +1897,17 @@ end $$;
 --      `authenticated` puede ejecutar el statement. `anon` no recibe nada:
 --      GBSInventario ya no tiene una vista "sin sesión" (ver auth.js#
 --      hasPlatformAccess() del sistema viejo, que exigía login para TODO).
+--
+--      service_role (la Admin API que usa supabase/functions/manage-users)
+--      normalmente ya tiene acceso automático a `public` en un proyecto
+--      Supabase estándar, pero se deja explícito acá también (mismo
+--      criterio que el espejo en sibex-schema-install.sql, donde SÍ hace
+--      falta — un schema nuevo no le da ese acceso gratis).
 -- ══════════════════════════════════════════════════════════════════════════
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to service_role;
 
 grant usage on schema public to authenticated;
 grant select on all tables in schema public to authenticated;
