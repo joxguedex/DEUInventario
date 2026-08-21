@@ -68,6 +68,22 @@ async function _rpc(name, body) {
   return data;
 }
 
+// ¿Ya existía esta persona ANTES de este intento de "Crear y otorgar
+// acceso"? Se chequea antes de llamar a create_person para poder distinguir,
+// si grant_login falla después, entre "esto ya estaba" (no tocar) y "esto lo
+// creé yo recién y hay que deshacerlo" (ver delete_person_if_no_login más
+// abajo) — GET usa Accept-Profile, no Content-Profile (ver _rpcHeaders).
+async function _personExists(ci) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/persons?ci=eq.${ci}&select=ci`, {
+      headers: auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }),
+    });
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
+}
+
 // La Edge Function es la única pieza que puede crear/editar/revocar una
 // cuenta de Auth (necesita la Admin API, ver supabase/functions/manage-
 // users) — nunca alcanzable con la anon/authenticated key sola.
@@ -99,23 +115,20 @@ export function renderVoluntarios(container) {
     return;
   }
 
-  if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
-    container.innerHTML = `
-      <div class="reg-wrap"><div class="reg-empty">
-        <div class="reg-empty-t">Elegí un grupo de extensión</div>
-        <div class="reg-empty-s">Usá el selector de la barra superior para elegir en qué grupo crear/editar usuarios. La lista de abajo sigue mostrando los de todos los grupos.</div>
-      </div></div>
-      <div class="reg-wrap" style="margin-top:16px;">
-        <div class="cnt-topcard">
-          <div class="ctc-progress-head"><span class="ctc-progress-title">Usuarios con acceso</span></div>
-          <div class="reg-list" id="vol-list" style="margin-top:14px;">
-            <div class="reg-empty"><span class="reg-empty-t">Cargando usuarios...</span></div>
-          </div>
-        </div>
-      </div>`;
-    loadVolunteers(container);
-    return;
-  }
+  // Grupo: campo explícito acá abajo (antes había que "adivinar" que el
+  // selector de la barra superior era lo que decidía el grupo destino —
+  // ahora se elige directo en el formulario, sin depender de otro control
+  // en otra parte de la pantalla). Precargado con el que ya esté elegido
+  // arriba, si hay uno; si no, el super_admin lo elige acá mismo.
+  const grupoFieldHTML = auth.isSuperAdmin() ? `
+    <div class="adm-field" style="width:220px;">
+      <label>Grupo de extensión</label>
+      <select id="vol-grupo" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
+        <option value="">Elegí un grupo…</option>
+        ${[...store.grupos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+          .map(g => `<option value="${g.id}" ${String(g.id) === String(store.viewingGrupoId) ? 'selected' : ''}>${escHtml(g.nombre)}</option>`).join('')}
+      </select>
+    </div>` : '';
 
   const roleFieldHTML = auth.isSuperAdmin() ? `
     <div class="adm-field" style="width:170px;">
@@ -130,9 +143,12 @@ export function renderVoluntarios(container) {
     <div class="reg-wrap">
       <div class="cnt-topcard">
         <div class="ctc-progress-head"><span class="ctc-progress-title">Otorgar acceso</span></div>
-        <div class="adm-note" style="margin:6px 0 14px;">Crea la persona y su inicio de sesión en un solo paso${auth.isSuperAdmin() ? ', dentro del grupo elegido en la barra superior' : ''}. ${auth.isSuperAdmin() ? 'Un super administrador nunca se crea desde acá.' : 'El rol siempre es Coordinador — un admin nuevo lo crea un super administrador.'}</div>
+        <div class="adm-note" style="margin:6px 0 14px;">Crea la persona y su inicio de sesión en un solo paso${auth.isSuperAdmin() ? ', dentro del grupo que elijas abajo' : ''}. ${auth.isSuperAdmin() ? 'Un super administrador nunca se crea desde acá.' : 'El rol siempre es Coordinador — un admin nuevo lo crea un super administrador.'}</div>
         <form id="vol-form" class="adm-cp-list" style="gap: 12px;">
-          ${roleFieldHTML}
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            ${grupoFieldHTML}
+            ${roleFieldHTML}
+          </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap;">
             <div class="adm-field" style="flex:1; min-width:140px;">
               <label>Cédula</label>
@@ -247,6 +263,21 @@ export function renderVoluntarios(container) {
     container.querySelector('#vol-area-field').style.display = e.target.value === 'admin' ? 'none' : '';
   });
 
+  // Cambiar de grupo en el formulario recarga las categorías de ESE grupo
+  // para el selector de Área (puede ser distinto del grupo elegido en la
+  // barra superior) — sin esto, "Área" seguiría mostrando las categorías
+  // del grupo anterior aunque ya se haya elegido otro acá abajo.
+  async function _refreshAreaFor(grupoIdRaw) {
+    const areaSel = container.querySelector('#vol-area');
+    if (!areaSel) return;
+    const gid = grupoIdRaw === '' || grupoIdRaw == null ? null : Number(grupoIdRaw);
+    const cats = gid == null ? [] : await _categoriasDeGrupo(gid);
+    areaSel.innerHTML = _areaOptionsHTML(cats);
+  }
+  const grupoSel = container.querySelector('#vol-grupo');
+  grupoSel?.addEventListener('change', (e) => _refreshAreaFor(e.target.value));
+  if (grupoSel) _refreshAreaFor(grupoSel.value);
+
   container.querySelector('#vol-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = container.querySelector('#vol-submit');
@@ -261,19 +292,35 @@ export function renderVoluntarios(container) {
       const password = container.querySelector('#vol-pass').value;
       const area = container.querySelector('#vol-area').value;
       const role = container.querySelector('#vol-role')?.value || 'coordinador';
-      const grupoId = auth.isSuperAdmin() ? store.viewingGrupoId : undefined;
+      const grupoRaw = container.querySelector('#vol-grupo')?.value;
+      const grupoId = auth.isSuperAdmin() ? Number(grupoRaw) : undefined;
+      if (auth.isSuperAdmin() && !grupoRaw) throw new Error('Elegí a qué grupo de extensión pertenece.');
 
-      // Paso 1: la persona (RPC normal). Si ya existe (p.ej. la creó un
-      // coordinador desde Egreso Rápido), create_person la actualiza — no
-      // hace falta distinguir alta/edición acá.
+      // ¿Existía ya esta persona? Se chequea ANTES del paso 1 para saber, si
+      // el paso 2 falla, si hay que deshacer lo que se acaba de crear o si
+      // ya estaba ahí de antes (p.ej. la creó un coordinador desde Egreso
+      // Rápido) y no hay que tocarla.
+      const existiaAntes = await _personExists(ci);
+
+      // Paso 1: la persona (RPC normal, upsert — ver create_person en SQL).
       await _rpc('create_person', {
         p_ci: ci, p_name: nombre, p_surname: apellido,
         p_phone_company_code: phoneCode, p_phone_number: phoneNum,
         p_grupo_id: grupoId,
       });
 
-      // Paso 2: el acceso en sí (Edge Function, Admin API).
-      await _edgeFn('grant_login', { ci, email, password, area, role, grupo_id: grupoId });
+      // Paso 2: el acceso en sí (Edge Function, Admin API). Si esto falla y
+      // la persona no existía antes de este intento, se deshace el paso 1 —
+      // "si no se puede otorgar el acceso, que no quede nada a medias en la
+      // base" (ver delete_person_if_no_login en SQL).
+      try {
+        await _edgeFn('grant_login', { ci, email, password, area, role, grupo_id: grupoId });
+      } catch (grantErr) {
+        if (!existiaAntes) {
+          try { await _rpc('delete_person_if_no_login', { p_ci: ci }); } catch {}
+        }
+        throw grantErr;
+      }
 
       toast.ok('Usuario creado y con acceso.');
       container.querySelector('#vol-form').reset();

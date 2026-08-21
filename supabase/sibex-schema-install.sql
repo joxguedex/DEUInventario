@@ -902,6 +902,38 @@ end;
 $$;
 grant execute on function sibex.create_person(bigint, text, text, text, text, sibex.person_categoria, bigint) to authenticated;
 
+-- Deshace un create_person cuando el paso 2 (grant_login, Admin API en la
+-- Edge Function) falla DESPUÉS de que el paso 1 ya guardó la persona — sin
+-- esto, un fallo a mitad de camino (p.ej. el correo ya existe en Auth) deja
+-- una persona sin ningún acceso "atascada" en la lista. El llamador
+-- (voluntarios.js) solo la invoca cuando la persona no existía antes de su
+-- propio intento — nunca para borrar a alguien que ya estaba ahí de antes.
+-- Por eso mismo esta función también se niega sola si la persona YA tiene
+-- login (auth_user_id no nulo): en ese punto ya no es "deshacer una
+-- creación fallida", es borrar una cuenta real, fuera de este alcance.
+create or replace function sibex.delete_person_if_no_login(p_ci bigint) returns void
+language plpgsql security definer set search_path = sibex as $$
+declare v_grupo bigint; v_auth_user_id uuid;
+begin
+  if not sibex.is_admin() then
+    raise exception 'Rol sin permiso para borrar personas';
+  end if;
+
+  select grupo_id, auth_user_id into v_grupo, v_auth_user_id
+    from sibex.persons where sibex.persons.ci = p_ci;
+  if v_grupo is null then return; end if; -- ya no existe, nada que deshacer
+  if not sibex.can_access_grupo(v_grupo) then
+    raise exception 'Esa persona pertenece a otro grupo de extensión';
+  end if;
+  if v_auth_user_id is not null then
+    raise exception 'Esa persona ya tiene inicio de sesión — no se puede deshacer su creación';
+  end if;
+
+  delete from sibex.persons where sibex.persons.ci = p_ci;
+end;
+$$;
+grant execute on function sibex.delete_person_if_no_login(bigint) to authenticated;
+
 -- ══════════════════════════════════════════════════════════════════════════
 --  8b. CATEGORÍAS — CRUD, admin-only (GBSInventario es una plantilla: cada
 --      organización define sus propias categorías, no un set fijo).
