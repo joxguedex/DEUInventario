@@ -7,7 +7,7 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml } from '../helpers.js';
+import { escHtml, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { promptDialog } from '../components/confirm.js';
 
@@ -25,21 +25,43 @@ export function renderGrupos(container, { onChange, onManage } = {}) {
   }
 
   container.innerHTML = `
-    <div class="reg-wrap">
-      <div class="cnt-topcard">
-        <div class="ctc-progress-head"><span class="ctc-progress-title">Grupos de extensión</span></div>
-        <div class="adm-note" style="margin:6px 0 14px;">Cada grupo lleva su propio inventario, usuarios, categorías y comunicados, sin ver el de los demás. Elegí "Gestionar" para pasar a administrar sus usuarios y categorías.</div>
-        <div class="adm-cp-list" id="grp-list">
-          <div class="adm-cp-empty">Cargando grupos...</div>
+    <div class="reg-wrap" style="max-width:820px;">
+      <div class="sec-header">
+        <div>
+          <div class="sec-eyebrow">Super administrador</div>
+          <div class="sec-title">Grupos de extensión</div>
+          <div class="sec-sub">Cada grupo lleva su propio inventario, usuarios, categorías y comunicados, sin ver el de los demás.</div>
         </div>
-        <form id="grp-form" style="display:flex; gap:8px; margin-top:14px;">
-          <input class="adm-field" style="flex:1; margin:0;" id="grp-nombre" placeholder="Nombre del grupo nuevo" maxlength="100">
-          <button type="submit" class="adm-mini">+ Crear grupo</button>
+      </div>
+
+      <div class="stats-cards" style="grid-template-columns:repeat(2,1fr); margin-bottom:18px;">
+        <div class="stat-card stat-card-total"><div class="stat-card-num" id="grp-stat-total">–</div><div class="stat-card-lbl">grupos totales</div></div>
+        <div class="stat-card stat-card-ok"><div class="stat-card-num" id="grp-stat-activo" style="font-size:1.1rem;">–</div><div class="stat-card-lbl">en gestión ahora</div></div>
+      </div>
+
+      <div class="stats-panel">
+        <div class="stats-panel-title">Todos los grupos</div>
+        <div class="grp-list" id="grp-list">
+          <div class="reg-empty"><span class="reg-empty-t">Cargando grupos...</span></div>
+        </div>
+      </div>
+
+      <div class="grp-create">
+        <div class="stats-panel-title" style="margin-bottom:0;">+ Crear grupo nuevo</div>
+        <form id="grp-form" class="grp-create-row">
+          <div class="adm-field">
+            <input id="grp-nombre" placeholder="Nombre del grupo (ej. Facultad de Medicina)" maxlength="100">
+          </div>
+          <button type="submit" class="btn btn-amber">+ Crear grupo</button>
         </form>
       </div>
     </div>`;
 
   _wire(container, { onChange, onManage });
+}
+
+function _initial(nombre) {
+  return (nombre || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
 async function _wire(container, { onChange, onManage }) {
@@ -65,21 +87,41 @@ async function _wire(container, { onChange, onManage }) {
 
 function _paintList(container, { onChange, onManage }) {
   const box = container.querySelector('#grp-list');
+  const statTotal = container.querySelector('#grp-stat-total');
+  const statActivo = container.querySelector('#grp-stat-activo');
   if (!box) return;
-  if (!store.grupos.length) { box.innerHTML = `<div class="adm-cp-empty">Sin grupos todavía — crea el primero abajo.</div>`; return; }
 
-  const grupos = [...store.grupos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   const activo = store.viewingGrupoId;
-  box.innerHTML = grupos.map(g => `
-    <div class="adm-cp" data-id="${g.id}">
-      <div class="adm-cp-info">
-        <div class="adm-cp-date">${escHtml(g.nombre)}${String(g.id) === String(activo) ? ' <span style="color:var(--amber);">· en gestión</span>' : ''}</div>
+  const grupos = [...store.grupos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  if (statTotal) statTotal.textContent = grupos.length.toLocaleString('es-VE');
+  if (statActivo) {
+    const g = grupos.find(x => String(x.id) === String(activo));
+    statActivo.textContent = g ? g.nombre : 'Todos';
+  }
+
+  if (!grupos.length) {
+    box.innerHTML = `<div class="reg-empty">
+      <div class="reg-empty-t">Sin grupos todavía</div>
+      <div class="reg-empty-s">Creá el primero con el formulario de abajo — cada organización que use este sistema necesita el suyo.</div>
+    </div>`;
+    return;
+  }
+
+  box.innerHTML = grupos.map(g => {
+    const isActive = String(g.id) === String(activo);
+    return `
+    <div class="grp-card${isActive ? ' active' : ''}" data-id="${g.id}">
+      <div class="grp-ico" style="background:${catColor(g.id)}">${escHtml(_initial(g.nombre))}</div>
+      <div class="grp-main">
+        <div class="grp-name">${escHtml(g.nombre)}</div>
+        ${isActive ? `<div class="grp-badge"><span class="grp-badge-dot"></span>En gestión ahora</div>` : ''}
       </div>
-      <div style="display:flex; gap:8px; flex-shrink:0;">
-        <button class="adm-mini" data-manage-grupo="${g.id}">Gestionar</button>
-        <button class="adm-mini" data-rename-grupo="${g.id}">Renombrar</button>
+      <div class="grp-actions">
+        <button class="btn btn-amber" data-manage-grupo="${g.id}">Gestionar</button>
+        <button class="btn btn-ghost" data-rename-grupo="${g.id}">Renombrar</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   box.querySelectorAll('[data-manage-grupo]').forEach(b => b.addEventListener('click', () => {
     onManage?.(Number(b.dataset.manageGrupo));

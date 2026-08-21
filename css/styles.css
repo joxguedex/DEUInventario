@@ -872,6 +872,23 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .stat-bar-val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t1);font-weight:700;flex-shrink:0;margin-left:8px}
 .stat-bar-track{height:10px;background:var(--s2);border-radius:99px;overflow:hidden}
 .stat-bar-fill{height:100%;border-radius:99px;transition:width .4s ease}
+
+/* ═══ GRUPOS DE EXTENSIÓN ═══ */
+.grp-list{display:flex;flex-direction:column;gap:10px}
+.grp-card{display:flex;align-items:center;gap:14px;background:var(--surface);border:1.5px solid var(--bdr);border-radius:var(--r-sm);padding:13px 16px;box-shadow:var(--sh);transition:border-color .15s}
+.grp-card.active{border-color:var(--amber)}
+.grp-ico{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;color:#fff}
+.grp-main{flex:1;min-width:0}
+.grp-name{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14.5px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-badge{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-size:11px;font-weight:700;color:var(--amber-d);letter-spacing:.2px}
+.grp-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--amber-d)}
+.grp-actions{display:flex;gap:8px;flex-shrink:0}
+.grp-actions .btn{padding:8px 15px;font-size:12.5px}
+.grp-create{background:var(--surface);border:1px solid var(--bdr);border-radius:var(--r);padding:20px 22px;box-shadow:var(--sh);margin-top:16px}
+.grp-create-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.grp-create-row .adm-field{flex:1;min-width:220px;margin:0}
+.grp-create-row .btn{flex-shrink:0}
+@media(max-width:600px){.grp-card{flex-wrap:wrap}.grp-actions{width:100%;margin-left:56px}}
 .stat-bar-sub{font-size:11px;color:var(--t4);margin-top:3px}
 
 /* ── Insumos por categoría (Resumen) — nombre + número en una línea, la
