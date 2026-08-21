@@ -861,6 +861,7 @@ create or replace function sibex.create_person(
   p_grupo_id bigint default null
 ) returns table(ci bigint, name text, surname text)
 language plpgsql security definer set search_path = sibex as $$
+#variable_conflict use_column
 declare v_phone_id bigint; v_grupo bigint; v_existing_grupo bigint;
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
@@ -875,7 +876,7 @@ begin
   -- este chequeo, dos grupos con una persona de la misma cédula chocarían
   -- contra el unique_violation de abajo (409 críptico) o, peor, el upsert
   -- pisaría en silencio los datos de la persona de OTRO grupo.
-  select grupo_id into v_existing_grupo from sibex.persons where sibex.persons.ci = p_ci;
+  select p.grupo_id into v_existing_grupo from sibex.persons p where p.ci = p_ci;
   if v_existing_grupo is not null and v_existing_grupo <> v_grupo then
     raise exception 'Esa cédula ya está registrada en otro grupo de extensión';
   end if;
@@ -913,14 +914,15 @@ grant execute on function sibex.create_person(bigint, text, text, text, text, si
 -- creación fallida", es borrar una cuenta real, fuera de este alcance.
 create or replace function sibex.delete_person_if_no_login(p_ci bigint) returns void
 language plpgsql security definer set search_path = sibex as $$
+#variable_conflict use_column
 declare v_grupo bigint; v_auth_user_id uuid;
 begin
   if not sibex.is_admin() then
     raise exception 'Rol sin permiso para borrar personas';
   end if;
 
-  select grupo_id, auth_user_id into v_grupo, v_auth_user_id
-    from sibex.persons where sibex.persons.ci = p_ci;
+  select p.grupo_id, p.auth_user_id into v_grupo, v_auth_user_id
+    from sibex.persons p where p.ci = p_ci;
   if v_grupo is null then return; end if; -- ya no existe, nada que deshacer
   if not sibex.can_access_grupo(v_grupo) then
     raise exception 'Esa persona pertenece a otro grupo de extensión';
@@ -929,7 +931,7 @@ begin
     raise exception 'Esa persona ya tiene inicio de sesión — no se puede deshacer su creación';
   end if;
 
-  delete from sibex.persons where sibex.persons.ci = p_ci;
+  delete from sibex.persons p where p.ci = p_ci;
 end;
 $$;
 grant execute on function sibex.delete_person_if_no_login(bigint) to authenticated;
@@ -1034,6 +1036,7 @@ create or replace function sibex.list_users_with_access() returns table(
   phone_company_code text, phone_number text, grupo_id bigint, grupo_nombre text
 )
 language plpgsql security definer set search_path = sibex as $$
+#variable_conflict use_column
 begin
   if not sibex.is_admin() then
     raise exception 'Solo un administrador puede listar usuarios';
