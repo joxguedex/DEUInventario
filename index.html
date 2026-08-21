@@ -48,6 +48,7 @@
     <button class="tn-item" data-page="despachos">Despachos<span id="dsp-badge-desktop" style="display:none;margin-left:6px;min-width:16px;height:16px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span></button>
     <button class="tn-item" data-page="comunicados">Comunicados<span class="nav-badge" id="nb-comms" style="display:none">0</span></button>
     <button class="tn-item" data-page="voluntarios">Usuarios</button>
+    <button class="tn-item" data-page="grupos">Grupos</button>
   </nav>
   <div class="tn-right">
     <!-- Solo visible para super_admin (ver app.js#applyRBAC) — elige qué
@@ -147,6 +148,7 @@
         <div id="comm-list"></div>
       </div>
       <div id="page-voluntarios" style="display:none"></div>
+      <div id="page-grupos" style="display:none"></div>
     </div>
   </main>
 </div>
@@ -194,6 +196,10 @@
   <button class="mbn-item" data-page="voluntarios">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
     <span>Usuarios</span>
+  </button>
+  <button class="mbn-item" data-page="grupos">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>Grupos</span>
   </button>
 </nav>
 

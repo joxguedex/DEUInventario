@@ -26,6 +26,7 @@ const ASSETS = [
   './js/views/resumen.js',
   './js/views/admin.js',
   './js/views/voluntarios.js',
+  './js/views/grupos.js',
   './js/components/toast.js',
   './js/components/confirm.js',
   './icon.svg',

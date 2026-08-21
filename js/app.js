@@ -11,6 +11,7 @@ import { renderIngresos, refreshIngresos } from './views/ingresos.js';
 import { renderEgresos, refreshEgresos } from './views/egresos.js';
 import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
+import { renderGrupos } from './views/grupos.js';
 import { renderDespachos } from './views/despachos.js';
 import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
 import { renderEgresoRapido, openEgreso } from './views/egresorapido.js';
@@ -30,11 +31,12 @@ const pages = {
   despachos: document.getElementById('page-despachos'),
   comunicados: document.getElementById('page-comunicados'),
   voluntarios: document.getElementById('page-voluntarios'),
+  grupos: document.getElementById('page-grupos'),
 };
 const TITLES = {
   conteo: 'Insumos', registro: 'Historial', ingresos: 'Ingresos', egresos: 'Egresos', resumen: 'Resumen',
   despachos: 'Despachos Pendientes', comunicados: 'Comunicados y Necesidades',
-  voluntarios: 'Gestión de Accesos',
+  voluntarios: 'Gestión de Accesos', grupos: 'Grupos de Extensión',
 };
 
 let _current = 'resumen';
@@ -90,6 +92,15 @@ async function nav(page) {
   if (page === 'despachos') renderDespachos(pages.despachos);
   if (page === 'comunicados') refreshComunicados();
   if (page === 'voluntarios') renderVoluntarios(pages.voluntarios);
+  if (page === 'grupos') renderGrupos(pages.grupos, {
+    onChange: _paintGrupoSwitch,
+    onManage: async (id) => {
+      store.setViewingGrupo(id);
+      _paintGrupoSwitch();
+      await store.loadCategories();
+      await nav('voluntarios');
+    },
+  });
 }
 
 // Pinta las opciones del selector de grupo (super_admin-only) con lo que
@@ -133,6 +144,12 @@ function applyRBAC() {
   // entera acá, ya que dejarla visible sin uso real solo genera confusión.
   document.querySelectorAll('.tn-item[data-page="voluntarios"], .mbn-item[data-page="voluntarios"]')
     .forEach(el => { el.style.display = auth.hasAdminRights() ? '' : 'none'; });
+
+  // "Grupos" (alta/gestión de grupos de extensión) es exclusivo de
+  // super_admin — un admin de grupo ya tiene el suyo fijo, no hay nada que
+  // gestionar acá (ver views/grupos.js).
+  document.querySelectorAll('.tn-item[data-page="grupos"], .mbn-item[data-page="grupos"]')
+    .forEach(el => { el.style.display = auth.isSuperAdmin() ? '' : 'none'; });
 
   // Selector de grupo de extensión: exclusivo de super_admin — un admin/
   // coordinador ya tiene su grupo fijo del lado del servidor, no hay nada
