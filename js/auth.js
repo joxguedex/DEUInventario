@@ -14,6 +14,7 @@
 // después de autenticar.
 
 import { SUPABASE_URL, SUPABASE_KEY, SYNC_ENABLED } from './config.js';
+import { DB_SCHEMA } from './env-config.js';
 
 const PROFILE_CACHE_KEY = 'gbs-inv-profile-cache';
 
@@ -69,7 +70,10 @@ export const auth = {
     try {
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/persons?auth_user_id=eq.${session.user.id}&select=ci,name,surname,phones(company_code,number)`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}` } }
+        { headers: {
+          apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}`,
+          'Accept-Profile': DB_SCHEMA,
+        } }
       );
       if (res.ok) {
         const rows = await res.json();

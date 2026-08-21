@@ -861,7 +861,7 @@ create or replace function sibex.create_person(
   p_grupo_id bigint default null
 ) returns table(ci bigint, name text, surname text)
 language plpgsql security definer set search_path = sibex as $$
-declare v_phone_id bigint; v_grupo bigint;
+declare v_phone_id bigint; v_grupo bigint; v_existing_grupo bigint;
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para crear personas';
@@ -871,14 +871,31 @@ begin
     raise exception 'Falta indicar el grupo de extensión';
   end if;
 
+  -- ci es bigint primary key GLOBAL (no está compuesta con grupo_id) — sin
+  -- este chequeo, dos grupos con una persona de la misma cédula chocarían
+  -- contra el unique_violation de abajo (409 críptico) o, peor, el upsert
+  -- pisaría en silencio los datos de la persona de OTRO grupo.
+  select grupo_id into v_existing_grupo from sibex.persons where sibex.persons.ci = p_ci;
+  if v_existing_grupo is not null and v_existing_grupo <> v_grupo then
+    raise exception 'Esa cédula ya está registrada en otro grupo de extensión';
+  end if;
+
   insert into sibex.phones (company_code, number)
     values (p_phone_company_code, p_phone_number)
     on conflict (company_code, number) do nothing;
   select id into v_phone_id from sibex.phones
     where company_code = p_phone_company_code and number = p_phone_number;
 
+  -- Upsert real (antes solo insert): si la persona ya existe (p.ej. la creó
+  -- un coordinador desde Egreso Rápido, o es un reintento tras un
+  -- grant_login fallido), esto la actualiza en vez de tirar unique_violation
+  -- — coherente con el comentario de voluntarios.js que ya asumía este
+  -- comportamiento. grupo_id nunca se toca en el update (una persona no
+  -- cambia de grupo por acá).
   insert into sibex.persons (ci, name, surname, phone_id, categoria, grupo_id)
-    values (p_ci, p_name, p_surname, v_phone_id, p_categoria, v_grupo);
+    values (p_ci, p_name, p_surname, v_phone_id, p_categoria, v_grupo)
+  on conflict (ci) do update set
+    name = excluded.name, surname = excluded.surname, phone_id = excluded.phone_id;
 
   return query select p_ci, p_name, p_surname;
 end;
@@ -1817,3 +1834,25 @@ grant insert, update, delete on
   sibex.conductores, sibex.conductor_vehiculos, sibex.conductor_dias, sibex.conductor_horarios,
   sibex.conductor_zonas, sibex.facultades, sibex.carreras, sibex.ucevistas, sibex.afectados
 to authenticated;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  13. REALTIME — sin esto el WebSocket conecta y reporta "SUBSCRIBED" pero
+--      nunca recibe nada (Postgres no publica los cambios de estas tablas),
+--      y sync.js#listenRealtime entra en un loop de reintentos que satura la
+--      consola. inventory/products son las únicas que la app escucha en
+--      vivo (ver sync.js) — el resto sigue por el timer de 30s de siempre.
+-- ══════════════════════════════════════════════════════════════════════════
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE sibex.inventory;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE sibex.products;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Para que los eventos de UPDATE viajen con la fila completa (con la
+-- identidad por defecto solo llega la PK).
+ALTER TABLE sibex.inventory REPLICA IDENTITY FULL;
+ALTER TABLE sibex.products  REPLICA IDENTITY FULL;
