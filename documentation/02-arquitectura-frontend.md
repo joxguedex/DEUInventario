@@ -12,8 +12,15 @@ Un único documento HTML que actúa de *app shell*.
     marca (`#brand-bold`/`#brand-rest`, sobrescritos en el arranque desde
     `branding.js`), badge de versión (`.version-badge`, ver
     [07-pwa-offline.md](./07-pwa-offline.md)), navegación entre pestañas,
-    pill de estado de sincronización (`#sync-pill`/`#sync-pill-m`) y botón
-    de perfil (`#auth-btn`).
+    selector de grupo de extensión (`#grupo-switch`/`#grupo-switch-m`,
+    exclusivo de `super_admin`), pill de estado de sincronización
+    (`#sync-pill`/`#sync-pill-m`) y botón de perfil (`#auth-btn`). En móvil
+    (`.m-topbar-right`), el logo (`.m-brand`) nunca cede espacio — es el
+    grupo de la derecha el que se acorta si no entra todo: el selector de
+    grupo baja de 150px a 64px de ancho y la pill de sync pierde el texto
+    (solo queda el punto de color; el detalle sigue en el `title` del
+    elemento) — antes, con ambos a pleno ancho en una cuenta super_admin,
+    el logo terminaba parcialmente tapado.
   - `<div class="statusbar">` (solo desktop): reloj en vivo + título de la
     página activa.
   - `<div class="app">`:
@@ -24,9 +31,14 @@ Un único documento HTML que actúa de *app shell*.
       `#qa-shell-foot`.
     - `<main class="main">` — un `<div id="page-X">` por pestaña
       (`conteo`, `registro`, `ingresos`, `egresos`, `resumen`, `despachos`,
-      `comunicados`, `voluntarios`), todos montados en el DOM a la vez;
-      `app.js#nav()` alterna su `display` para navegar (no hay router de
-      URL/history — no hay deep-linking entre pestañas por URL).
+      `comunicados`, `voluntarios`, `grupos`), todos montados en el DOM a
+      la vez; `app.js#nav()` alterna su `display` para navegar (no hay
+      router de URL/history — no hay deep-linking entre pestañas por URL).
+      Dos pares comparten una sola pestaña en la bottom nav móvil pero
+      siguen siendo `#page-X` separados: Ingresos/Egresos bajo
+      `[data-page="movimientos"]` (`#m-subnav-mov`) y Usuarios/Grupos bajo
+      `[data-page="accesos"]` (`#m-subnav-acc`) — ver `_syncMovSubnav`/
+      `_syncAccSubnav` más abajo.
   - FAB (`#fab-qa`) + backdrop + bottom nav — solo móvil (≤820px), abren/
     cierran el panel de Ingreso/Egreso Rápido como hoja inferior.
 - Carga por `<script>` de CDN: `xlsx` y `@supabase/supabase-js@2` (global
@@ -51,6 +63,17 @@ muestra el `#page-X` correspondiente, actualiza el título (objeto
 `onEgresado`/el callback de `sync.onChange` para saber qué repintar tras un
 cambio.
 
+**Botones "virtuales" de la bottom nav móvil** (`[data-page="movimientos"]`,
+`[data-page="accesos"]`) nunca llegan a `nav()` tal cual — el listener de
+clic los traduce a la sub-página vista por última vez (`_movSub`/`_accSub`,
+default `'ingresos'`/`'voluntarios'`) antes de llamar `nav()`. Cada uno
+tiene su propia barra de sub-tabs (`#m-subnav-mov`/`#m-subnav-acc`,
+`.m-subnav-btn[data-subpage]`) que `_syncMovSubnav(page)`/
+`_syncAccSubnav(page)` muestran (`.show`) solo cuando la página activa es
+una de las dos que agrupan, y mantienen sincronizado cuál sub-tab queda
+`.active`. En desktop ambos pares siguen siendo pestañas independientes de
+`.tn-nav` — este mecanismo es exclusivo de `.mbn-item`.
+
 Los enlaces `data-nav="<page>"` (p.ej. "Ver todo →" en Resumen, o la flecha
 "Ver en Historial" de las tarjetas de Ingresos/Egresos) se resuelven con un
 único listener delegado en `document`: navega, y si además trae
@@ -63,9 +86,18 @@ el filtro y hacer scroll hasta el día correcto.
 Se ejecuta en cada cambio de sesión (`checkAuth()`). Reglas:
 
 - Resetea `display` a `''` en todas las pestañas primero.
-- **"Usuarios"** (`[data-page="voluntarios"]`) se oculta entera si
-  `!auth.isAdmin()` — antes solo mostraba un mensaje dentro de la pestaña,
-  ahora la pestaña misma desaparece del nav (desktop y móvil).
+- **"Usuarios"** (`.tn-item[data-page="voluntarios"]`, y en móvil
+  `.mbn-item[data-page="accesos"]` — ver `#m-subnav-acc` arriba) se oculta
+  entera si `!auth.hasAdminRights()` — antes solo mostraba un mensaje
+  dentro de la pestaña, ahora la pestaña misma desaparece del nav (desktop
+  y móvil).
+- **"Grupos"** (`.tn-item[data-page="grupos"]`, y en móvil el sub-tab
+  `#m-subnav-acc .m-subnav-btn[data-subpage="grupos"]`) se oculta si
+  `!auth.isSuperAdmin()` — más estricto que Usuarios: un admin de grupo
+  normal sí ve la pestaña combinada "Accesos" en móvil, pero solo con el
+  sub-tab "Usuarios" disponible. El selector de grupo
+  (`#grupo-switch`/`#grupo-switch-m`) sigue la misma regla
+  (`isSuperAdmin()`), y se repinta (`_paintGrupoSwitch()`) cuando aplica.
 - **"Despachos"** (`[data-page="despachos"]`) se oculta **para cualquier
   rol**, siempre — vía CSS `!important` (`css/styles.css`), porque este
   reset de `applyRBAC()` corre en cada sesión y de otro modo la
@@ -180,6 +212,7 @@ cuerpo.
 | `rsm-`, `hero-`, `stats-` | Resumen (hero "Centro Operativo" + estadísticas) |
 | `tl-`, `tag-`, `fbtn` | Comunicados |
 | `vol-` (inline en el JS) | Usuarios — mayormente estilos inline en `voluntarios.js` |
+| `grp-` | Grupos de extensión (`views/grupos.js`, super_admin-only) |
 | `toast-` | Notificaciones flotantes |
 | `fab`, `mbn-` | FAB y bottom nav móviles |
 
@@ -194,7 +227,8 @@ config.js ──► auth.js ──► sync.js ──► db.js (IndexedDB)
                                  ▼
                     views/*.js (conteo, ingresorapido,
                     egresorapido, registro, ingresos,
-                    egresos, resumen, comunicados, voluntarios)
+                    egresos, resumen, comunicados, voluntarios,
+                    grupos)
                                  │
                                  ▼
                             app.js (orquesta

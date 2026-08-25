@@ -179,15 +179,13 @@ export async function openPanel() {
           <span class="adm-sec-title">Cambiar contraseña</span>
         </div>
         <form id="adm-pass-form" style="display:flex; flex-direction:column; gap:12px;">
-          <div style="display:flex; gap:12px; flex-wrap:wrap;">
-            <div class="adm-field" style="flex:1; min-width:140px;">
-              <label>Contraseña nueva</label>
-              <input type="password" id="adm-pass-nueva" required autocomplete="new-password" placeholder="Mínimo 6 caracteres">
-            </div>
-            <div class="adm-field" style="flex:1; min-width:140px;">
-              <label>Repetir contraseña nueva</label>
-              <input type="password" id="adm-pass-nueva2" required autocomplete="new-password" placeholder="Repite la contraseña">
-            </div>
+          <div class="adm-field" style="margin:0;">
+            <label>Contraseña nueva</label>
+            <input type="password" id="adm-pass-nueva" required autocomplete="new-password" placeholder="Mínimo 6 caracteres">
+          </div>
+          <div class="adm-field" style="margin:0;">
+            <label>Repetir contraseña nueva</label>
+            <input type="password" id="adm-pass-nueva2" required autocomplete="new-password" placeholder="Repite la contraseña">
           </div>
           <div class="adm-err" id="adm-pass-err"></div>
           <button type="submit" class="adm-btn adm-btn-primary" id="adm-pass-submit">Cambiar contraseña</button>

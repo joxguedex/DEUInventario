@@ -172,12 +172,19 @@ Pestaña por defecto al iniciar sesión.
   backlog en la primera carga tras un login), actualiza el badge del nav
   (`#nb-comms`/`#nb-comms-mobile`).
 
-## `views/voluntarios.js` — Usuarios (admin-only)
+## `views/voluntarios.js` — Usuarios (admin/super_admin)
 
-Pestaña oculta del nav para cualquier cuenta que no sea admin (ver
+Pestaña oculta del nav para cualquier cuenta sin `auth.hasAdminRights()`
+(ver
 [02-arquitectura-frontend.md](./02-arquitectura-frontend.md#rbac-de-navegación-applyrbac);
 el mensaje interno "Solo para administradores" se conserva como respaldo
-por si se llega acá de otra forma).
+por si se llega acá de otra forma). Un `super_admin` gestiona los usuarios
+del grupo que tenga elegido en el selector de grupo de la barra superior
+(`store.viewingGrupoId`); un `admin` normal solo ve/gestiona su propio
+grupo, sin selector. En móvil comparte pestaña de bottom nav con "Grupos"
+(`[data-page="accesos"]`, sub-tab "Usuarios" — ver
+[views/grupos.js](#viewsgruposjs--grupos-de-extensión-super-admin-only) más
+abajo).
 
 Separa dos cosas que antes eran un solo paso:
 
@@ -219,6 +226,30 @@ Por fila: Editar, Activar/Desactivar (`set_active`, baneo nativo de Auth,
 reversible sin reconfigurar nada), Revocar (`revoke_access`, limpia rol/área
 y cierra sesión de inmediato — no borra la persona ni su cuenta, se puede
 volver a otorgar acceso después).
+
+## `views/grupos.js` — Grupos de extensión (super_admin-only)
+
+Pestaña oculta del nav para cualquier cuenta que no sea `auth.isSuperAdmin()`
+(ver
+[02-arquitectura-frontend.md](./02-arquitectura-frontend.md#rbac-de-navegación-applyrbac)
+y [05-autenticacion.md](./05-autenticacion.md)) — un admin de grupo ya tiene
+el suyo fijo, no hay nada que gestionar acá. Antes vivía como una sección
+más dentro del panel de cuenta (`admin.js`); pasó a ser su propia pestaña
+para que dar de alta una organización entera no quedara escondido.
+
+- **Tarjetas** (`.grp-list`/`.grp-card`, `store.grupos`): avatar de color
+  (inicial del nombre), nombre, badge "En gestión ahora" si coincide con
+  `store.viewingGrupoId`, y dos acciones — **"Gestionar"** (`onManage`,
+  cableado en `app.js#nav()`: fija ese grupo en el selector de la barra
+  superior vía `store.setViewingGrupo` y salta a la pestaña Usuarios) y
+  **"Renombrar"** (`promptDialog` + `store.renameGrupo`).
+- **Crear grupo** (`#grp-form`): un solo campo de nombre → `store.createGrupo`.
+- **Stats**: grupos totales, y cuál está "en gestión ahora" (el elegido en
+  el selector, o "Todos" si no hay ninguno fijado).
+- **Móvil**: comparte pestaña de bottom nav con Usuarios
+  (`[data-page="accesos"]`, sub-tab "Grupos" — oculto en el sub-tab para
+  cuentas no-super_admin, ver `app.js#applyRBAC()`); en desktop sigue
+  siendo su propio `tn-item`.
 
 ## `views/despachos.js` — oculta, código dormido
 

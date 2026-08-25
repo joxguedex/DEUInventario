@@ -67,9 +67,9 @@
 <!-- ═══ Topbar (móvil) ═══ -->
 <div class="m-topbar">
   <span class="m-brand"><span id="brand-bold-m">GBS</span><span class="m-brand-rest" id="brand-rest-m">Inventario</span> <span id="version-badge-m" class="version-badge"></span></span>
-  <div style="display:flex;align-items:center;gap:8px">
+  <div class="m-topbar-right">
     <select class="grupo-switch" id="grupo-switch-m" title="Grupo de extensión" style="display:none"></select>
-    <div class="sync-pill local" id="sync-pill-m">
+    <div class="sync-pill local" id="sync-pill-m" title="Sincronizar">
       <div class="sync-dot"></div><span id="sync-label-m">Local</span>
     </div>
     <button class="auth-btn" id="auth-btn-m">
@@ -147,6 +147,17 @@
         </div>
         <div id="comm-list"></div>
       </div>
+      <!-- Móvil: Usuarios/Grupos comparten un solo botón en la bottom nav
+           (ver .mbn-item[data-page="accesos"] arriba) — esta barra deja
+           alternar entre ambos sin volver a la bottom nav. Oculta en
+           desktop (que ya tiene los dos tn-item por separado) y oculta en
+           móvil salvo cuando la página activa es una de las dos (.show, ver
+           js/app.js#_syncAccSubnav). El subtab "Grupos" además se oculta
+           para cuentas que no son super_admin (ver app.js#applyRBAC). -->
+      <div class="m-subnav" id="m-subnav-acc">
+        <button class="m-subnav-btn active" data-subpage="voluntarios">Usuarios</button>
+        <button class="m-subnav-btn" data-subpage="grupos">Grupos</button>
+      </div>
       <div id="page-voluntarios" style="display:none"></div>
       <div id="page-grupos" style="display:none"></div>
     </div>
@@ -193,13 +204,14 @@
     </span>
     <span>Comunicados</span>
   </button>
-  <button class="mbn-item" data-page="voluntarios">
+  <!-- Móvil: un solo botón para Usuarios+Grupos (desktop conserva los dos
+       tn-item por separado en .tn-nav) — igual patrón que "movimientos"
+       arriba: abre la última sub-página vista y queda "active" para las
+       dos; el toggle entre ambas vive en #m-subnav-acc, ver comentario
+       sobre #page-voluntarios/#page-grupos más abajo. -->
+  <button class="mbn-item" data-page="accesos">
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-    <span>Usuarios</span>
-  </button>
-  <button class="mbn-item" data-page="grupos">
-    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-    <span>Grupos</span>
+    <span>Accesos</span>
   </button>
 </nav>
 

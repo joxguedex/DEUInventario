@@ -57,6 +57,22 @@ function _syncMovSubnav(page) {
   }
 }
 
+// Móvil: mismo patrón que _movSub/_syncMovSubnav de arriba, pero para
+// Usuarios+Grupos (ver mbn-item[data-page="accesos"] en index.html) — en
+// desktop ambas siguen siendo pestañas separadas de .tn-nav, esto es
+// exclusivo de la bottom nav móvil.
+let _accSub = 'voluntarios';
+function _syncAccSubnav(page) {
+  const bar = document.getElementById('m-subnav-acc');
+  if (!bar) return;
+  const isAcc = page === 'voluntarios' || page === 'grupos';
+  bar.classList.toggle('show', isAcc);
+  if (isAcc) {
+    _accSub = page;
+    bar.querySelectorAll('.m-subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.subpage === page));
+  }
+}
+
 // ── Switcher Ingreso/Egreso Rápido (mismo panel, ver #qa-switcher en
 // index.html) — Egreso ya no tiene su propio botón/overlay; alterna dentro
 // de <aside id="ingresorapido"> mostrando/ocultando #qa-panel-ingreso vs.
@@ -78,9 +94,12 @@ async function nav(page) {
   _current = page;
   document.querySelectorAll('.tn-item, .mbn-item').forEach(n => {
     const p = n.dataset.page;
-    n.classList.toggle('active', p === page || (p === 'movimientos' && (page === 'ingresos' || page === 'egresos')));
+    n.classList.toggle('active', p === page
+      || (p === 'movimientos' && (page === 'ingresos' || page === 'egresos'))
+      || (p === 'accesos' && (page === 'voluntarios' || page === 'grupos')));
   });
   _syncMovSubnav(page);
+  _syncAccSubnav(page);
   Object.entries(pages).forEach(([k, el]) => el.style.display = k === page ? 'block' : 'none');
   document.getElementById('page-title').textContent = TITLES[page] || '';
 
@@ -142,13 +161,19 @@ function applyRBAC() {
   // servidor (voluntarios.js#renderVoluntarios ya mostraba un mensaje en vez
   // del hub para cualquier otra cuenta) — se oculta también la pestaña
   // entera acá, ya que dejarla visible sin uso real solo genera confusión.
-  document.querySelectorAll('.tn-item[data-page="voluntarios"], .mbn-item[data-page="voluntarios"]')
+  // En móvil, Usuarios+Grupos comparten una sola pestaña de la bottom nav
+  // (mbn-item[data-page="accesos"], ver #m-subnav-acc en index.html) — la
+  // visibilidad de esa pestaña combinada sigue el mismo criterio que
+  // Usuarios (el más permisivo de las dos), y el subtab "Grupos" de adentro
+  // se acota aparte, más abajo.
+  document.querySelectorAll('.tn-item[data-page="voluntarios"], .mbn-item[data-page="accesos"]')
     .forEach(el => { el.style.display = auth.hasAdminRights() ? '' : 'none'; });
 
   // "Grupos" (alta/gestión de grupos de extensión) es exclusivo de
   // super_admin — un admin de grupo ya tiene el suyo fijo, no hay nada que
-  // gestionar acá (ver views/grupos.js).
-  document.querySelectorAll('.tn-item[data-page="grupos"], .mbn-item[data-page="grupos"]')
+  // gestionar acá (ver views/grupos.js). En desktop es su propia pestaña de
+  // .tn-nav; en móvil es el subtab "Grupos" dentro de #m-subnav-acc.
+  document.querySelectorAll('.tn-item[data-page="grupos"], #m-subnav-acc .m-subnav-btn[data-subpage="grupos"]')
     .forEach(el => { el.style.display = auth.isSuperAdmin() ? '' : 'none'; });
 
   // Selector de grupo de extensión: exclusivo de super_admin — un admin/
@@ -320,7 +345,10 @@ async function boot() {
   clock(); setInterval(clock, 1000);
 
   document.querySelectorAll('.tn-item, .mbn-item').forEach(n =>
-    n.addEventListener('click', () => nav(n.dataset.page === 'movimientos' ? _movSub : n.dataset.page)));
+    n.addEventListener('click', () => nav(
+      n.dataset.page === 'movimientos' ? _movSub :
+      n.dataset.page === 'accesos' ? _accSub :
+      n.dataset.page)));
 
   document.querySelectorAll('.m-subnav-btn').forEach(b =>
     b.addEventListener('click', () => nav(b.dataset.subpage)));

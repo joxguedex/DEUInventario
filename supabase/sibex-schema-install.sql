@@ -1265,7 +1265,7 @@ create or replace function sibex.apply_count(
 language plpgsql security definer set search_path = sibex as $$
 declare v_pid bigint; v_cat bigint; v_mid bigint; v_qty integer; v_ci bigint; v_tipo text;
 begin
-  if sibex.current_role() not in ('admin', 'coordinador') then
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
   if p_origen not in ('ingreso', 'conteo') then
@@ -1315,7 +1315,7 @@ create or replace function sibex.uncount_item(p_product_client_id text) returns 
 language plpgsql security definer set search_path = sibex as $$
 declare v_pid bigint; v_cat bigint;
 begin
-  if sibex.current_role() not in ('admin', 'coordinador') then
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
 
@@ -1339,7 +1339,7 @@ create or replace function sibex.delete_count(p_client_op_id text) returns void
 language plpgsql security definer set search_path = sibex as $$
 declare v_mid bigint; v_product_ids bigint[];
 begin
-  if sibex.current_role() not in ('admin', 'coordinador') then
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
 
@@ -1525,7 +1525,7 @@ create or replace function sibex.merge_product(
 language plpgsql security definer set search_path = sibex as $$
 declare v_source bigint; v_target bigint; v_source_cat bigint; v_target_cat bigint;
 begin
-  if sibex.current_role() not in ('admin', 'coordinador') then
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para fusionar insumos';
   end if;
 
@@ -1814,8 +1814,8 @@ create policy phones_insert on sibex.phones for insert
 create policy person_status_select on sibex.person_status for select
   to authenticated using (true);
 create policy person_status_write on sibex.person_status for all
-  to authenticated using (sibex.current_role() in ('admin', 'coordinador'))
-  with check (sibex.current_role() in ('admin', 'coordinador'));
+  to authenticated using (sibex.current_role() in ('admin', 'coordinador', 'super_admin'))
+  with check (sibex.current_role() in ('admin', 'coordinador', 'super_admin'));
 
 -- 11.5 — dominio ubicaciones/conductores/facultades (+ comandas_viejas,
 -- comanda_imagenes, product_aliases: satélites de comandas/products sin
