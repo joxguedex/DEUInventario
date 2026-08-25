@@ -65,28 +65,62 @@ Rápido o el Excel de importación masiva, ver
 ## `js/store.js` — estado central + lógica de negocio
 
 Único módulo con estado mutable en memoria compartido por toda la app:
-`store.items` (catálogo con estado de conteo), `store.logs` (bitácora),
-`store.categories` (`[{id, nombre}]`), `store.contadorNombre`,
-`store.communications`.
+`store.items`, `store.logs` (bitácora), `store.categories` (`[{id,
+nombre}]`), `store.grupos`, `store.contadorNombre`, `store.communications`.
+
+**Productos multigrupo (revisión 2026-08-25):** el catálogo (`categories`/
+`products`) es compartido entre grupos de extensión — una categoría puede
+estar vinculada a varios grupos (`category_grupos`, ver
+[08-base-de-datos-PENDIENTE.md](./08-base-de-datos-PENDIENTE.md)) y un
+producto (nombre+unidad únicos por categoría) es una única fila reutilizada
+por todos los grupos que lo cuenten. Lo que varía por grupo es el CONTEO
+(`inventory`), así que `store.items` pasa a tener **una fila por (producto,
+grupo)**, no una por producto:
+
+- `item.id` — clave local **compuesta**: `` `${productClientId}::${grupoId}` ``
+  (ver `_localId()`). Nunca asumir que es el `client_id` real del producto.
+- `item.productClientId` — `client_id` real del producto (server), estable
+  entre grupos — es lo que hay que mandar a `apply_count`/
+  `add_product_to_grupo`/etc.
+- `item.grupoId` — a qué grupo pertenece ESTE conteo.
+- `item.deleted_at` — ahora significa "este grupo quitó su conteo"
+  (`inventory.deleted_at`), no "el producto fue borrado" (eso solo pasa vía
+  `merge_product`, server-side, y ya no deja ninguna fila local del producto
+  perdedor porque no le queda ningún `inventory` que la genere).
+- `store.siblings(productClientId)` — todas las filas (de cualquier grupo
+  visible) de un mismo producto; lo usa Insumos para el total agregado
+  cuando un super_admin ve más de un grupo a la vez.
 
 ### `store.init()`
 
 1. Carga `contadorNombre` desde `localStorage`.
-2. `loadCategories()` si sync está habilitado.
+2. `loadCategories()` + `loadAllCategoryNames()` (catálogo global de
+   nombres, para el buscador de crear categoría) si sync está habilitado;
+   `loadGrupos()` además si es super_admin.
 3. Filtra el seed (`CATALOGO`, vacío) contra las lápidas de `sync.js`.
 4. Si IndexedDB está vacía: siembra (no hay nada que sembrar hoy) y marca
-   `desdeCero = true`. Si ya había datos: agrega solo las altas nuevas del
-   seed que falten.
+   `desdeCero = true`.
 5. Si `sync.enabled`: si `desdeCero`, `sync.resetCheckpoint()`; luego
    `sync.run()` y recarga `items`/`logs` desde IndexedDB.
 
-### Categorías (CRUD admin-only del lado del servidor)
+### Categorías — catálogo compartido, busca-y-reutiliza
 
-- `loadCategories()` — `GET rest/v1/categories?select=id,nombre&order=nombre.asc`.
-- `createCategory(nombre)` → RPC `create_category`.
-- `renameCategory(id, nombre)` → RPC `update_category`.
-- `deleteCategory(id)` → RPC `delete_category` (bloquea si aún hay
-  productos asignados; ver [08-base-de-datos-PENDIENTE.md](./08-base-de-datos-PENDIENTE.md)).
+- `loadCategories()` — categorías vinculadas al grupo activo (o el catálogo
+  global completo si un super_admin no eligió un grupo puntual, ver
+  `categoriesForGrupo(grupoId)`).
+- `loadAllCategoryNames()`/`searchCategoryNames(query)` — catálogo GLOBAL de
+  nombres (cualquier grupo), para sugerir reutilizar una categoría ya
+  existente en vez de duplicarla al crear una nueva.
+- `createCategory(nombre, grupoId)` → RPC `create_category` — busca por
+  nombre (case-insensitive) y reutiliza si existe; si no, crea y vincula al
+  grupo.
+- `renameCategory(id, nombre)` → RPC `update_category` (afecta a TODOS los
+  grupos que la usan — es la misma categoría compartida).
+- `deleteCategory(id, {force, grupoId})` → RPC `delete_category` —
+  desvincula la categoría de ESE grupo (bloquea si quedan conteos vivos de
+  esa categoría en ese grupo, salvo `force: true`); solo borra la categoría
+  real si queda sin ningún grupo vinculado. Ver
+  [08-base-de-datos-PENDIENTE.md](./08-base-de-datos-PENDIENTE.md).
 
 ### Operaciones de negocio sobre insumos
 
@@ -101,31 +135,46 @@ corresponde (offline-first: la UI nunca espera a la red).
   Historial.
 - **`setTotal(itemId, total, opts)`** — fija el total exacto: calcula la
   diferencia contra la cantidad actual y delega en `registrar`.
-- **`addNuevo({nombre, categoria, unidad, umbral, cantidad})`** —
-  crea/encuentra por nombre normalizado; `categoria` es obligatoria (una
-  categoría real, ya no hay un valor por defecto implícito).
-- **`deleteInsumo(id)`** — borrado lógico (`deleted_at`).
-- **`renombrarInsumo(id, nombre)`**, **`setUmbral(id, umbral)`**.
+- **`addNuevo({nombre, categoria, unidad, umbral, umbralMax, cantidad})`** —
+  agrega un insumo a MI grupo (`writeGrupoId()`): busca/crea localmente por
+  nombre normalizado y encola `'addproduct'` → RPC `add_product_to_grupo`,
+  que busca-y-reutiliza el producto real (mismo nombre+unidad en esa
+  categoría, usado por otro grupo) antes de crear uno nuevo — evita
+  duplicar catálogo entre grupos.
+- **`deleteInsumo(id)`** — borrado lógico del CONTEO de mi grupo (encola
+  `'removeproduct'` → RPC `remove_product_from_grupo`); el producto sigue
+  disponible para cualquier otro grupo que lo cuente. Revivir = volver a
+  agregarlo (`addNuevo`).
+- **`renombrarInsumo(id, nombre)`**, **`setUmbral(id, umbral, umbralMax)`**
+  — el producto es compartido: el cambio se refleja en TODAS las filas
+  locales que compartan `productClientId` (otros grupos visibles).
 - **`fusionarInsumo(sourceId, targetId)`** — suma la cantidad de origen al
   destino, borra lógicamente el origen, encola una operación `'merge'`
-  (RPC `merge_product`, reatribuye TODO el historial — movimientos, y desde
-  la migración de Egresos, también los reportes de entregas — al destino).
+  (RPC `merge_product`, reatribuye TODO el historial y fusiona el conteo de
+  cada grupo — suma si el destino ya tiene fila para ese grupo, repunta si
+  no — al destino).
 - **`deleteLog(logId, fallback)`** — corrige/borra un registro de
   bitácora: revierte el efecto sobre `item.cantidad`, intenta borrar el
   movimiento en la nube (directo si hay red, encolado si no).
 - **`resetItem(id)`** — deshace todo el conteo de un insumo (logs, cantidad
   a 0, `uncount_item` del lado del servidor).
-- **`activeLogs()`**, **`stats()`**, **`statsByCat()`**, **`grouped()`**,
-  **`csv()`** — métricas/agrupaciones derivadas, todas sobre
-  `visibleItems()`.
+- **`activeLogs()`**, **`stats()`**, **`statsByCat()`**, **`statsByGrupo()`**,
+  **`grouped()`**, **`csv()`** — métricas/agrupaciones derivadas, todas
+  sobre `visibleItems()`. `statsByGrupo()` es nuevo (Resumen: unidades
+  totales por grupo, solo relevante cuando la vista mezcla más de uno).
 - **`visibleItems()`** — filtro central de RBAC de datos: un coordinador de
   área ve solo `items` cuya `categoria` coincide con `auth.area()`; admin y
-  el coordinador de área `general` ven todo. Ver
+  el coordinador de área `general` ven todo su grupo; un super_admin sin
+  grupo elegido ve TODOS los grupos a la vez (una fila por conteo). Ver
   [05-autenticacion.md](./05-autenticacion.md).
 - **`setProductCategory(itemId, categoryId)`** → RPC
-  `update_product_category` (admin-only del lado del servidor).
+  `update_product_category` (admin-only del lado del servidor) — se
+  refleja en todas las filas locales del mismo producto.
 - **`countActiveUsers()`** → RPC `count_active_users` (para la pill de
   Resumen).
+- **`writeGrupoId()`** — grupo efectivo para una escritura: el propio
+  (admin/coordinador) o el elegido en la barra superior (super_admin; `null`
+  si eligió "Todos" — no alcanza para escribir).
 
 ### Comunicados
 

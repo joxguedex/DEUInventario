@@ -111,15 +111,7 @@ async function nav(page) {
   if (page === 'despachos') renderDespachos(pages.despachos);
   if (page === 'comunicados') refreshComunicados();
   if (page === 'voluntarios') renderVoluntarios(pages.voluntarios);
-  if (page === 'grupos') renderGrupos(pages.grupos, {
-    onChange: _paintGrupoSwitch,
-    onManage: async (id) => {
-      store.setViewingGrupo(id);
-      _paintGrupoSwitch();
-      await store.loadCategories();
-      await nav('voluntarios');
-    },
-  });
+  if (page === 'grupos') renderGrupos(pages.grupos, { onChange: _paintGrupoSwitch });
 }
 
 // Pinta las opciones del selector de grupo (super_admin-only) con lo que

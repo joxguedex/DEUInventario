@@ -29,7 +29,8 @@ export const checkpoints = {
       resumen: { contados: s.contados, total: s.total, unidades: s.unidades },
       data: {
         items: store.items.map(i => ({
-          id: i.id, nombre: i.nombre, categoria: i.categoria, unidad: i.unidad,
+          id: i.id, productClientId: i.productClientId, grupoId: i.grupoId,
+          nombre: i.nombre, categoria: i.categoria, unidad: i.unidad,
           umbral: i.umbral, umbral_max: i.umbral_max ?? null, cantidad: i.cantidad, contado: i.contado,
           contado_por: i.contado_por, updated_at: i.updated_at, nuevo: i.nuevo || false,
         })),
@@ -60,7 +61,13 @@ export const checkpoints = {
     const byId = new Map(store.items.map(i => [i.id, i]));
     for (const snap of cp.data.items) {
       const cur = byId.get(snap.id) || {};
-      byId.set(snap.id, { ...cur, ...snap, dirty: true });
+      // Respaldo viejo sin productClientId/grupoId propios (previo a la
+      // revisión "productos multigrupo") — se derivan del propio id
+      // compuesto ("client_id::grupo_id") si hace falta.
+      const [fallbackPcid, fallbackGrupo] = String(snap.id).split('::');
+      const productClientId = snap.productClientId ?? cur.productClientId ?? fallbackPcid;
+      const grupoId = snap.grupoId ?? cur.grupoId ?? (fallbackGrupo != null ? Number(fallbackGrupo) : null);
+      byId.set(snap.id, { ...cur, ...snap, productClientId, grupoId, dirty: true });
     }
     store.items = [...byId.values()];
     await db.bulkPut(store.items);   // una sola transacción

@@ -9,8 +9,13 @@
 // ingresorapido.js), que es de donde vienen en UCVAcopio.
 
 import { store } from '../store.js';
+import { auth } from '../auth.js';
 import { escHtml, catLabel, catColor, timeAgo } from '../helpers.js';
 import { APP_NAME_BOLD, HERO_DESCRIPTION } from '../branding.js';
+
+function _grupoLabel(id) {
+  return store.grupos.find(g => String(g.id) === String(id))?.nombre || '?';
+}
 
 let _root = null;
 let _usuariosActivos = null; // cache en memoria — countActiveUsers() es admin/coordinador-only
@@ -63,6 +68,13 @@ function _paint() {
 
   const cats = Object.keys(bc).sort((a, b) => catLabel(a).localeCompare(catLabel(b), 'es'));
   const maxUnidades = Math.max(1, ...cats.map(c => bc[c].unidades));
+
+  // Totales por grupo — solo tiene sentido cuando la vista mezcla más de uno
+  // (super_admin sin un grupo elegido en la barra superior, ver
+  // store.js#statsByGrupo).
+  const bg = (auth.isSuperAdmin() && store.viewingGrupoId == null) ? store.statsByGrupo() : {};
+  const grps = Object.keys(bg).sort((a, b) => _grupoLabel(a).localeCompare(_grupoLabel(b), 'es'));
+  const maxGrupoUnidades = Math.max(1, ...grps.map(g => bg[g].unidades));
 
   const comms = [...store.activeCommunications]
     .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
@@ -125,6 +137,29 @@ function _paint() {
           }).join('')}
         </div>` : `<div class="empty"><div class="empty-title">Sin categorías todavía</div><div class="empty-txt">Un admin puede crear la primera desde Insumos.</div></div>`}
       </div>
+
+      ${grps.length ? `
+      <div class="stats-panel">
+        <div class="stats-panel-title">Unidades por grupo de extensión</div>
+        <div class="stats-cat-grid">
+          ${grps.map(g => {
+            const d = bg[g];
+            const w = Math.round(d.unidades / maxGrupoUnidades * 100);
+            const col = catColor(g);
+            return `<div class="stats-cat-row">
+              <div class="stats-cat-top">
+                <div class="stats-cat-info">
+                  <div class="stats-cat-dot" style="background:${col}"></div>
+                  <div class="stats-cat-name">${escHtml(_grupoLabel(g))}</div>
+                </div>
+                <div class="stats-cat-num">${d.unidades.toLocaleString('es-VE')}</div>
+              </div>
+              <div class="stats-cat-sub">${d.total.toLocaleString('es-VE')} insumo${d.total !== 1 ? 's' : ''}</div>
+              <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${w}%;background:${col}"></div></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
 
       <div class="stats-panel">
         <div class="stats-panel-title">

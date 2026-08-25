@@ -9,12 +9,10 @@ import { store } from '../store.js';
 import { auth } from '../auth.js';
 import { escHtml, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
-import { promptDialog } from '../components/confirm.js';
+import { openEditGrupoModal } from './admin.js';
 
 // onChange: repinta el selector de grupo del topnav (ver app.js#_paintGrupoSwitch).
-// onManage(id): "Gestionar" — el llamador decide qué significa eso (hoy,
-// elegir ese grupo arriba y saltar a la pestaña Usuarios).
-export function renderGrupos(container, { onChange, onManage } = {}) {
+export function renderGrupos(container, { onChange } = {}) {
   if (!auth.isSuperAdmin()) {
     container.innerHTML = `
       <div class="reg-wrap"><div class="reg-empty">
@@ -57,16 +55,16 @@ export function renderGrupos(container, { onChange, onManage } = {}) {
       </div>
     </div>`;
 
-  _wire(container, { onChange, onManage });
+  _wire(container, { onChange });
 }
 
 function _initial(nombre) {
   return (nombre || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
-async function _wire(container, { onChange, onManage }) {
+async function _wire(container, { onChange }) {
   await store.loadGrupos();
-  _paintList(container, { onChange, onManage });
+  _paintList(container, { onChange });
 
   container.querySelector('#grp-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -76,7 +74,7 @@ async function _wire(container, { onChange, onManage }) {
     try {
       await store.createGrupo(nombre);
       inp.value = '';
-      _paintList(container, { onChange, onManage });
+      _paintList(container, { onChange });
       onChange?.();
       toast.ok('Grupo creado.');
     } catch (ex) {
@@ -85,7 +83,7 @@ async function _wire(container, { onChange, onManage }) {
   });
 }
 
-function _paintList(container, { onChange, onManage }) {
+function _paintList(container, { onChange }) {
   const box = container.querySelector('#grp-list');
   const statTotal = container.querySelector('#grp-stat-total');
   const statActivo = container.querySelector('#grp-stat-activo');
@@ -117,34 +115,16 @@ function _paintList(container, { onChange, onManage }) {
         ${isActive ? `<div class="grp-badge"><span class="grp-badge-dot"></span>En gestión ahora</div>` : ''}
       </div>
       <div class="grp-actions">
-        <button class="btn btn-amber" data-manage-grupo="${g.id}">Gestionar</button>
-        <button class="btn btn-ghost" data-rename-grupo="${g.id}">Renombrar</button>
+        <button class="btn btn-amber" data-edit-grupo="${g.id}">Editar</button>
       </div>
     </div>`;
   }).join('');
 
-  box.querySelectorAll('[data-manage-grupo]').forEach(b => b.addEventListener('click', () => {
-    onManage?.(Number(b.dataset.manageGrupo));
-  }));
-
-  box.querySelectorAll('[data-rename-grupo]').forEach(b => b.addEventListener('click', async () => {
-    const g = store.grupos.find(x => String(x.id) === b.dataset.renameGrupo);
-    const nuevo = await promptDialog({
-      title: 'Renombrar grupo de extensión',
-      label: 'Nuevo nombre',
-      value: g?.nombre || '',
-      confirmText: 'Renombrar',
+  box.querySelectorAll('[data-edit-grupo]').forEach(b => b.addEventListener('click', () => {
+    const g = store.grupos.find(x => String(x.id) === b.dataset.editGrupo);
+    if (!g) return;
+    openEditGrupoModal(g, {
+      onChange: () => { _paintList(container, { onChange }); onChange?.(); },
     });
-    if (nuevo == null) return;
-    const val = nuevo.trim();
-    if (!val || val === g.nombre) return;
-    try {
-      await store.renameGrupo(g.id, val);
-      _paintList(container, { onChange, onManage });
-      onChange?.();
-      toast.ok('Grupo renombrado.');
-    } catch (ex) {
-      toast.err(ex.message || 'No se pudo renombrar el grupo.');
-    }
   }));
 }

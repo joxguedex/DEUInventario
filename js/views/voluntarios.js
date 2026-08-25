@@ -43,16 +43,12 @@ function _areaOptionsHTML(categorias = store.categories) {
 // super_admin puede estar editando a alguien de OTRO grupo distinto del que
 // tiene elegido en la barra superior (list_users_with_access le muestra
 // todos los grupos a la vez); store.categories solo trae el grupo elegido
-// (o ninguno si eligió "Todos"), así que hace falta pedirlas aparte.
+// (o ninguno si eligió "Todos"), así que hace falta pedirlas aparte (ver
+// store.js#categoriesForGrupo — categorías ya no tienen un grupo_id fijo,
+// se resuelven vía la tabla category_grupos).
 async function _categoriasDeGrupo(grupoId) {
   if (!auth.isSuperAdmin() || grupoId === store.viewingGrupoId) return store.categories;
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/categories?select=id,nombre&grupo_id=eq.${grupoId}&order=nombre.asc`,
-      { headers: _rpcHeaders() }
-    );
-    return res.ok ? await res.json() : [];
-  } catch { return []; }
+  return store.categoriesForGrupo(grupoId);
 }
 
 function _rpcHeaders(extra = {}) {

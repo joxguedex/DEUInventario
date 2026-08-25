@@ -107,16 +107,39 @@ create table sibex.grupos (
   updated_at  timestamptz not null default now()
 );
 
+-- Catálogo COMPARTIDO entre grupos (revisión "productos multigrupo",
+-- 2026-08-25): una categoría ya no pertenece a un único grupo — puede estar
+-- vinculada a varios vía `category_grupos` (M2M, abajo). Nombre único
+-- globalmente (case-insensitive): crear una categoría busca-y-reutiliza una
+-- ya existente antes de duplicar (ver create_category, sección 8b).
 create table sibex.categories (
   id          bigint generated always as identity primary key,
   nombre      text not null check (char_length(trim(nombre)) > 0 and char_length(nombre) <= 100),
-  grupo_id    bigint not null references sibex.grupos (id),
   created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now(),
-  unique (grupo_id, nombre)
+  updated_at  timestamptz not null default now()
 );
-create index categories_grupo_id_idx on sibex.categories (grupo_id);
+create unique index categories_nombre_unique_idx on sibex.categories (lower(btrim(nombre)));
 
+-- M2M categoría↔grupo — reemplaza el `categories.grupo_id` fijo de antes.
+-- Sin `deleted_at`: desvincular (delete_category) es un DELETE real de esta
+-- fila, no hay pérdida de datos reales (la categoría y sus productos siguen
+-- intactos, solo deja de estar "en uso" por ese grupo).
+create table sibex.category_grupos (
+  category_id  bigint not null references sibex.categories (id) on delete cascade,
+  grupo_id     bigint not null references sibex.grupos (id) on delete cascade,
+  created_at   timestamptz not null default now(),
+  primary key (category_id, grupo_id)
+);
+create index category_grupos_grupo_id_idx on sibex.category_grupos (grupo_id);
+
+-- Producto: catálogo COMPARTIDO por categoría entre todos los grupos que la
+-- usen (revisión "productos multigrupo", 2026-08-25) — ya NO pertenece a un
+-- grupo (no tiene `grupo_id` propio); lo que varía por grupo es su CONTEO
+-- (`inventory`, abajo, ahora 1 fila por (producto, grupo)). Nombre+unidad
+-- únicos POR CATEGORÍA (ya no por grupo): dos grupos que necesiten "Arroz /
+-- kg" en "Alimentos" comparten la misma fila — add_product_to_grupo
+-- (sección 10) busca-y-reutiliza antes de crear, este índice es el
+-- guardarraíl a nivel de base de datos.
 create table sibex.products (
   id           bigint generated always as identity primary key,
   name         text not null check (char_length(trim(name)) > 0 and char_length(name) <= 200),
@@ -137,24 +160,32 @@ create table sibex.products (
   -- ya no cuenta para el chequeo "hay productos en esta categoría" ni
   -- bloquea el DELETE, así que el FK cede en vez de restringir.
   category_id  bigint references sibex.categories (id) on delete set null,
-  -- Denormalizado desde categories.grupo_id (trigger sync_product_grupo,
-  -- sección 7) — hace falta como columna propia (no solo derivable vía
-  -- category_id) porque la unique de abajo necesita compararlo sin joins.
-  -- Nullable: un producto soft-borrado puede quedar sin categoría (ver
-  -- delete_category), y por lo tanto sin grupo determinable.
-  grupo_id     bigint references sibex.grupos (id),
-  constraint products_grupo_name_unidad_key unique (grupo_id, name, unidad),
   constraint products_umbral_range_chk check (umbral_max is null or umbral_max > umbral)
 );
 create index products_category_id_idx on sibex.products (category_id);
-create index products_grupo_id_idx on sibex.products (grupo_id);
+-- Parcial: solo entre productos VIVOS de una categoría real — permite
+-- reutilizar el nombre de un producto ya fusionado/soft-borrado (ver
+-- merge_product) sin chocar contra su fila vieja.
+create unique index products_category_name_unidad_unique_idx
+  on sibex.products (category_id, lower(btrim(name)), unidad)
+  where category_id is not null and deleted_at is null;
 
+-- Conteo de un producto DENTRO de un grupo — dueño real del vínculo con un
+-- grupo (antes vivía, denormalizado, en products.grupo_id). PK compuesta:
+-- un mismo producto puede tener una fila por cada grupo que lo usa.
+-- `deleted_at`: borrado lógico — "eliminar un insumo" (views/conteo.js) solo
+-- oculta/borra ESTA fila, nunca el producto real ni el conteo de otros
+-- grupos; revivir = volver a agregarlo (add_product_to_grupo, sección 10).
 create table sibex.inventory (
-  product_id       bigint primary key references sibex.products (id) on delete cascade,
+  product_id       bigint not null references sibex.products (id) on delete cascade,
+  grupo_id         bigint not null references sibex.grupos (id),
   qnty             integer not null default 0 check (qnty >= 0),
   last_counted_at  timestamptz,
-  last_counted_by  text
+  last_counted_by  text,
+  deleted_at       timestamptz,
+  primary key (product_id, grupo_id)
 );
+create index inventory_grupo_id_idx on sibex.inventory (grupo_id);
 
 create table sibex.phones (
   id            bigint generated always as identity primary key,
@@ -181,6 +212,9 @@ create table sibex.persons (
 create index persons_auth_user_id_idx on sibex.persons (auth_user_id);
 create index persons_grupo_id_idx on sibex.persons (grupo_id);
 
+-- grupo_id: denormalizado (todo movimiento ocurre dentro de un único grupo —
+-- lo crea un actor con un solo grupo de contexto a la vez, sus líneas nunca
+-- mezclan grupos) — evita navegar movement_items→products solo para RLS.
 create table sibex.movements (
   id            bigint generated always as identity primary key,
   direction     sibex.movement_direction not null default 'in',
@@ -189,8 +223,10 @@ create table sibex.movements (
   delivered_by  bigint references sibex.persons (ci) on delete set null,
   occurred_at   timestamptz not null default now(),
   note          text check (note is null or char_length(note) <= 2000),
-  client_op_id  text unique
+  client_op_id  text unique,
+  grupo_id      bigint not null references sibex.grupos (id)
 );
+create index movements_grupo_id_idx on sibex.movements (grupo_id);
 
 create table sibex.movement_items (
   id           bigint generated always as identity primary key,
@@ -317,10 +353,16 @@ create table sibex.comandas (
   exported_at                     timestamptz,
   deleted_at                      timestamptz,
   client_op_id                    text unique,
-  movement_id                     bigint references sibex.movements (id) on delete set null
+  movement_id                     bigint references sibex.movements (id) on delete set null,
+  -- Denormalizado (poblado por create_comanda_rapida, igual que
+  -- movements.grupo_id) — evita navegar comanda_items/movement_items solo
+  -- para RLS. Nullable: satélite de comandas_viejas/imports sin grupo
+  -- resuelto no debería bloquear el insert.
+  grupo_id                        bigint references sibex.grupos (id)
 );
 create index comandas_deleted_at_idx on sibex.comandas (deleted_at);
 create index comandas_status_idx on sibex.comandas (status);
+create index comandas_grupo_id_idx on sibex.comandas (grupo_id);
 
 create table sibex.comanda_items (
   id                integer generated always as identity primary key,
@@ -565,53 +607,27 @@ begin
   end loop;
 end $$;
 
--- 7.2 — cada producto nuevo arranca con su fila de inventory en 0.
--- SECURITY DEFINER: products SÍ acepta INSERT/UPDATE directo del cliente
--- (sync.js sube productos por REST sin pasar por una RPC), pero inventory
--- NO tiene ninguna política que permita INSERT directo a nadie (§12 — todas
--- sus escrituras van por RPCs SECURITY DEFINER). Sin este atributo, el
--- INSERT de este trigger se evalúa con los permisos del usuario que creó el
--- producto y la política de inventory lo rechaza con 403 (ver
--- supabase/2026-08-10-fix-create-inventory-row-rls.sql).
-create or replace function sibex.create_inventory_row() returns trigger
-language plpgsql security definer set search_path = sibex as $$
-begin
-  insert into sibex.inventory (product_id) values (new.id)
-  on conflict (product_id) do nothing;
-  return new;
-end;
-$$;
-create trigger trg_products_create_inventory
-  after insert on sibex.products
-  for each row execute function sibex.create_inventory_row();
+-- 7.2 — ya NO hay una fila de inventory automática por producto nuevo (el
+-- viejo trigger create_inventory_row/sync_product_grupo asumía 1 producto =
+-- 1 grupo). Ahora una fila de inventory es "este grupo usa este producto" y
+-- se crea explícitamente vía add_product_to_grupo (sección 10) cuando ese
+-- grupo empieza a contarlo — no en el INSERT del producto en sí.
 
--- 7.2b — products.grupo_id se mantiene sincronizado con la categoría del
--- producto (denormalizado, ver comentario en la tabla) — el cliente nunca
--- necesita enviarlo, solo category_id como ya hacía.
-create or replace function sibex.sync_product_grupo() returns trigger
-language plpgsql as $$
-begin
-  new.grupo_id := (select grupo_id from sibex.categories where id = new.category_id);
-  return new;
-end;
-$$;
-create trigger trg_products_sync_grupo
-  before insert or update of category_id on sibex.products
-  for each row execute function sibex.sync_product_grupo();
-
--- 7.3 — ajusta inventory.qnty al insertar una línea de movimiento, y paga
--- requests abiertas (oldest-first) cuando el movimiento es de entrada.
+-- 7.3 — ajusta inventory.qnty (de la fila (product_id, grupo_id) del propio
+-- movimiento) al insertar una línea de movimiento, y paga requests abiertas
+-- (oldest-first) cuando el movimiento es de entrada.
 create or replace function sibex.apply_movement_item() returns trigger
 language plpgsql as $$
 declare
   dir     sibex.movement_direction;
+  v_grupo bigint;
   budget  integer;
   r       record;
 begin
-  select direction into dir from sibex.movements where id = new.movement_id;
+  select direction, grupo_id into dir, v_grupo from sibex.movements where id = new.movement_id;
 
   if dir = 'in' then
-    update sibex.inventory set qnty = qnty + new.qnty where product_id = new.product_id;
+    update sibex.inventory set qnty = qnty + new.qnty where product_id = new.product_id and grupo_id = v_grupo;
 
     budget := new.qnty;
     for r in
@@ -629,7 +645,7 @@ begin
       end if;
     end loop;
   else
-    update sibex.inventory set qnty = qnty - new.qnty where product_id = new.product_id;
+    update sibex.inventory set qnty = qnty - new.qnty where product_id = new.product_id and grupo_id = v_grupo;
   end if;
 
   return new;
@@ -640,28 +656,30 @@ create trigger trg_movement_items_apply
   for each row execute function sibex.apply_movement_item();
 
 -- 7.4 — revierte/ajusta inventory.qnty al corregir o borrar una línea ya
--- aplicada (usado por "corregir/borrar" en la Bitácora).
+-- aplicada (usado por "corregir/borrar" en la Bitácora), sobre la fila
+-- (product_id, grupo_id) del movimiento original.
 create or replace function sibex.apply_movement_item_changes() returns trigger
 language plpgsql as $$
-declare dir sibex.movement_direction;
+declare dir sibex.movement_direction; v_grupo bigint;
 begin
   if tg_op = 'DELETE' then
-    select direction into dir from sibex.movements where id = old.movement_id;
+    select direction, grupo_id into dir, v_grupo from sibex.movements where id = old.movement_id;
+    if v_grupo is null then return old; end if; -- movimiento padre ya no resoluble (no debería pasar)
     if dir = 'in' then
-      update sibex.inventory set qnty = qnty - old.qnty where product_id = old.product_id;
+      update sibex.inventory set qnty = qnty - old.qnty where product_id = old.product_id and grupo_id = v_grupo;
     else
-      update sibex.inventory set qnty = qnty + old.qnty where product_id = old.product_id;
+      update sibex.inventory set qnty = qnty + old.qnty where product_id = old.product_id and grupo_id = v_grupo;
     end if;
     return old;
   end if;
 
   if tg_op = 'UPDATE' then
     if new.qnty <> old.qnty then
-      select direction into dir from sibex.movements where id = new.movement_id;
+      select direction, grupo_id into dir, v_grupo from sibex.movements where id = new.movement_id;
       if dir = 'in' then
-        update sibex.inventory set qnty = qnty + (new.qnty - old.qnty) where product_id = new.product_id;
+        update sibex.inventory set qnty = qnty + (new.qnty - old.qnty) where product_id = new.product_id and grupo_id = v_grupo;
       else
-        update sibex.inventory set qnty = qnty - (new.qnty - old.qnty) where product_id = new.product_id;
+        update sibex.inventory set qnty = qnty - (new.qnty - old.qnty) where product_id = new.product_id and grupo_id = v_grupo;
       end if;
     end if;
     return new;
@@ -783,19 +801,31 @@ language sql stable as $$
   select nullif(sibex.current_area(), 'general')::bigint
 $$;
 
--- ¿Puede el actor actual tocar productos/movimientos de esta categoría?
--- super_admin: siempre. admin/coordinador de 'general': siempre dentro de
--- SU grupo (consulta/despacha todo, nunca su propio inventario).
--- coordinador de categoría real: solo la suya, y solo dentro de su grupo.
--- Un solo cambio acá se propaga a TODA policy/RPC que ya llama
+-- ¿Puede el actor actual tocar productos de esta categoría? super_admin:
+-- siempre. admin/coordinador de 'general': siempre que MI grupo tenga esta
+-- categoría vinculada (consulta/despacha todo, nunca su propio inventario).
+-- coordinador de categoría real: solo la suya, y solo si mi grupo la tiene
+-- vinculada. Un solo cambio acá se propaga a TODA policy/RPC que ya llama
 -- can_access_category() (products, inventory, movements, movement_items,
 -- requests, comandas, comanda_items, merge_product, apply_count, etc.) sin
 -- tener que tocarlas una por una.
+--
+-- Revisión "productos multigrupo" (2026-08-25): una categoría ya no
+-- pertenece a un único grupo (category_grupos, M2M) — esto es lo que hace
+-- que un coordinador vea SUGERENCIAS de productos de la misma categoría ya
+-- usados por otros grupos (comparten categoría vinculada a mi grupo), pero
+-- YA NO implica "puedo tocar el conteo de este grupo para este producto":
+-- eso además exige can_access_grupo() sobre la fila concreta de inventory/
+-- movements/comandas (ver sección 11), porque la categoría puede estar
+-- vinculada a más de un grupo a la vez.
 create or replace function sibex.can_access_category(p_category_id bigint) returns boolean
 language sql stable as $$
   select sibex.is_super_admin()
       or (
-        sibex.can_access_grupo((select grupo_id from sibex.categories where id = p_category_id))
+        exists (
+          select 1 from sibex.category_grupos cg
+          where cg.category_id = p_category_id and cg.grupo_id = sibex.current_grupo_id()
+        )
         and (
           sibex.current_role() = 'admin'
           or sibex.current_area() = 'general'
@@ -845,7 +875,7 @@ begin
   end if;
 end;
 $$;
-revoke execute on function sibex.link_person_login(bigint, uuid) from public, anon, authenticated;
+revoke execute on function sibex.link_person_login(bigint, uuid) from sibex, anon, authenticated;
 
 -- Crea una persona SIN inicio de sesión (nombre/apellido/cédula/teléfono).
 -- admin y coordinador pueden llamarla — la política real de "quién puede
@@ -941,12 +971,21 @@ grant execute on function sibex.delete_person_if_no_login(bigint) to authenticat
 --      organización define sus propias categorías, no un set fijo).
 -- ══════════════════════════════════════════════════════════════════════════
 
--- p_grupo_id: un admin de grupo siempre crea dentro de su propio grupo (se
--- ignora cualquier otro valor que mande el cliente); super_admin debe
--- indicarlo explícitamente (no tiene uno propio).
+-- p_grupo_id: un admin de grupo siempre crea/vincula dentro de su propio
+-- grupo (se ignora cualquier otro valor que mande el cliente); super_admin
+-- debe indicarlo explícitamente (no tiene uno propio).
+--
+-- Busca-y-reutiliza (case-insensitive) antes de crear — catálogo
+-- COMPARTIDO entre grupos (revisión "productos multigrupo", 2026-08-25): si
+-- ya existe una categoría con ese nombre (de cualquier grupo), se reutiliza
+-- esa fila y solo se agrega el vínculo `category_grupos` para MI grupo; si
+-- no, se crea una nueva. El cliente arma el cuadro de búsqueda (mismo
+-- patrón `normSearch` que ya usa el buscador de "Renombrar" en
+-- views/conteo.js) y llama a esta única RPC tanto para vincular una
+-- sugerencia existente como para crear una categoría nueva desde cero.
 create or replace function sibex.create_category(p_nombre text, p_grupo_id bigint default null) returns bigint
 language plpgsql security definer set search_path = sibex as $$
-declare v_id bigint; v_grupo bigint;
+declare v_id bigint; v_grupo bigint; v_nombre text;
 begin
   if not sibex.is_admin() then
     raise exception 'Solo un administrador puede crear categorías';
@@ -955,10 +994,19 @@ begin
   if v_grupo is null then
     raise exception 'Falta indicar el grupo de extensión';
   end if;
-  if p_nombre is null or btrim(p_nombre) = '' then
+  v_nombre := btrim(p_nombre);
+  if v_nombre is null or v_nombre = '' then
     raise exception 'El nombre de la categoría es obligatorio';
   end if;
-  insert into sibex.categories (nombre, grupo_id) values (btrim(p_nombre), v_grupo) returning id into v_id;
+
+  select id into v_id from sibex.categories where lower(nombre) = lower(v_nombre);
+  if v_id is null then
+    insert into sibex.categories (nombre) values (v_nombre) returning id into v_id;
+  end if;
+
+  insert into sibex.category_grupos (category_id, grupo_id) values (v_id, v_grupo)
+    on conflict (category_id, grupo_id) do nothing;
+
   return v_id;
 end;
 $$;
@@ -979,43 +1027,188 @@ end;
 $$;
 grant execute on function sibex.update_category(bigint, text) to authenticated;
 
--- Borra una categoría. Bloquea si todavía hay productos asignados (el admin
--- debe reasignarlos con update_product_category, o eliminarlos, primero) —
--- evita productos huérfanos y borrados accidentales de catálogo completo.
+-- Revisión "productos multigrupo" (2026-08-25): borrar una categoría pasa a
+-- ser "desvincularla de MI grupo" (delete de category_grupos) — la
+-- categoría real y sus productos son compartidos, así que un DELETE liso
+-- afectaría a cualquier otro grupo que también la use. Bloquea si hay
+-- conteos VIVOS (inventory.deleted_at is null) de esta categoría PARA MI
+-- GRUPO, salvo que p_force = true (entonces primero los soft-borra en
+-- bloque — "eliminar inmediatamente todos los conteos" del cliente). Si tras
+-- desvincular la categoría queda sin ningún grupo, se borra la fila real
+-- (limpieza de huérfana).
 --
--- Efecto en cascada sobre personas: cualquier coordinador cuya área sea esta
--- categoría queda SIN ACCESO — "rebajado a persona sin acceso al sistema"
--- (no se borra ni la persona ni la cuenta de Auth, solo se le limpia
--- rol/área). auth.users vive en la misma base Postgres, así que un UPDATE
--- directo sobre su columna de metadata no requiere la Admin API — a
--- diferencia de crear/borrar una cuenta, que sí la requiere (ver Edge
--- Function). CAVEAT importante: el JWT de una sesión ya emitida sigue
--- teniendo el rol/área viejo hasta que se refresca (Supabase lo renueva
--- automáticamente cada ~1h) — para revocar al instante hace falta además
--- invalidar su sesión (auth.admin.signOut), eso sí vive en la Edge Function.
-create or replace function sibex.delete_category(p_id bigint) returns void
+-- Efecto en cascada sobre personas: cualquier coordinador de MI grupo cuya
+-- área sea esta categoría queda SIN ACCESO (no afecta coordinadores de
+-- OTROS grupos que también la usen). auth.users vive en la misma base
+-- Postgres, así que un UPDATE directo sobre su columna de metadata no
+-- requiere la Admin API — a diferencia de crear/borrar una cuenta, que sí
+-- la requiere (ver Edge Function). CAVEAT importante: el JWT de una sesión
+-- ya emitida sigue teniendo el rol/área viejo hasta que se refresca
+-- (Supabase lo renueva automáticamente cada ~1h).
+create or replace function sibex.delete_category(p_id bigint, p_force boolean default false, p_grupo_id bigint default null) returns void
 language plpgsql security definer set search_path = sibex as $$
+declare v_grupo bigint;
 begin
-  if not (sibex.is_admin() and sibex.can_access_category(p_id)) then
+  if not sibex.is_admin() then
     raise exception 'Solo un administrador puede eliminar categorías';
   end if;
-  -- Solo productos VIVOS bloquean el borrado — uno soft-borrado sigue en la
-  -- BD (para no perder su historial) pero ya no cuenta como "en uso". Los
-  -- soft-borrados que queden apuntando a p_id se desvinculan solos por el FK
-  -- category_id → categories ON DELETE SET NULL al ejecutar el DELETE de abajo.
-  if exists (select 1 from sibex.products where category_id = p_id and deleted_at is null) then
-    raise exception 'Hay productos en esta categoría — reasígnalos o elimínalos antes de borrarla';
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
+  end if;
+  if not sibex.can_access_category(p_id) then
+    raise exception 'No tienes permiso para eliminar esta categoría';
+  end if;
+  if not exists (select 1 from sibex.category_grupos where category_id = p_id and grupo_id = v_grupo) then
+    raise exception 'Esta categoría no está vinculada a tu grupo';
+  end if;
+
+  if exists (
+    select 1 from sibex.inventory i join sibex.products p on p.id = i.product_id
+    where p.category_id = p_id and i.grupo_id = v_grupo and i.deleted_at is null
+  ) then
+    if not p_force then
+      raise exception 'Hay insumos con conteo en esta categoría para tu grupo — usa la opción de forzar para eliminarlos también';
+    end if;
+    update sibex.inventory i set deleted_at = now()
+      from sibex.products p
+     where i.product_id = p.id and p.category_id = p_id and i.grupo_id = v_grupo and i.deleted_at is null;
   end if;
 
   update auth.users
      set raw_app_meta_data = raw_app_meta_data - 'role' - 'area'
-   where raw_app_meta_data ->> 'area' = p_id::text;
+   where raw_app_meta_data ->> 'area' = p_id::text
+     and (raw_app_meta_data ->> 'grupo_id')::bigint = v_grupo;
 
-  delete from sibex.categories where id = p_id;
-  if not found then raise exception 'Categoría % no existe', p_id; end if;
+  delete from sibex.category_grupos where category_id = p_id and grupo_id = v_grupo;
+
+  if not exists (select 1 from sibex.category_grupos where category_id = p_id) then
+    delete from sibex.categories where id = p_id;
+  end if;
 end;
 $$;
-grant execute on function sibex.delete_category(bigint) to authenticated;
+grant execute on function sibex.delete_category(bigint, boolean, bigint) to authenticated;
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+--  8c. PRODUCTOS ↔ GRUPO — encontrar-o-crear un producto compartido y
+--      adjuntar/quitar el conteo (inventory) de MI grupo (revisión
+--      "productos multigrupo", 2026-08-25). Reemplaza el upsert directo por
+--      REST que hacía sync.js para productos nuevos — un producto ya no se
+--      crea "suelto", siempre junto con el conteo del grupo que lo pide.
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- Busca un producto VIVO ya existente en la categoría por nombre+unidad
+-- (catálogo compartido — evita duplicados) y lo reutiliza; si no existe, lo
+-- crea. En ambos casos adjunta (o revive, si estaba soft-borrada) la fila de
+-- inventory de MI grupo, y si p_qnty ≠ 0 registra el conteo inicial vía un
+-- movimiento (mismo motor que apply_count, sección 9 — queda auditado en la
+-- Bitácora). p_client_id: solo se usa si el producto es realmente nuevo — si
+-- se reutiliza uno existente, el cliente debe adoptar el client_id devuelto.
+create or replace function sibex.add_product_to_grupo(
+  p_client_id      text,
+  p_name           text,
+  p_unidad         text,
+  p_category_id    bigint,
+  p_umbral         integer default 10,
+  p_umbral_max     integer default null,
+  p_qnty           integer default 0,
+  p_client_op_id   text default null,
+  p_grupo_id       bigint default null
+) returns table(product_id bigint, client_id text, name text, qnty integer)
+language plpgsql security definer set search_path = sibex as $$
+declare
+  v_grupo bigint; v_pid bigint; v_client_id text; v_name text; v_unidad text;
+  v_mid bigint; v_ci bigint; v_qty integer;
+begin
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
+    raise exception 'Rol sin permiso para agregar insumos';
+  end if;
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
+  end if;
+  if not sibex.can_access_category(p_category_id) then
+    raise exception 'No tienes permiso para agregar insumos en esta categoría';
+  end if;
+  v_name := btrim(p_name);
+  v_unidad := btrim(p_unidad);
+  if v_name is null or v_name = '' then
+    raise exception 'El nombre del insumo es obligatorio';
+  end if;
+  if v_unidad is null or v_unidad = '' then
+    raise exception 'La unidad es obligatoria';
+  end if;
+
+  select id, client_id into v_pid, v_client_id
+    from sibex.products
+   where category_id = p_category_id and unidad = v_unidad
+     and lower(btrim(name)) = lower(v_name) and deleted_at is null;
+
+  if v_pid is null then
+    insert into sibex.products (client_id, name, unidad, category_id, umbral, umbral_max)
+      values (p_client_id, v_name, v_unidad, p_category_id, coalesce(p_umbral, 10), p_umbral_max)
+      returning id, client_id into v_pid, v_client_id;
+  end if;
+
+  insert into sibex.inventory (product_id, grupo_id, qnty)
+    values (v_pid, v_grupo, 0)
+    on conflict (product_id, grupo_id) do update set deleted_at = null
+    where inventory.deleted_at is not null;
+
+  if p_client_op_id is not null and exists (select 1 from sibex.movements where client_op_id = p_client_op_id) then
+    select qnty into v_qty from sibex.inventory where product_id = v_pid and grupo_id = v_grupo;
+    return query select v_pid, v_client_id, v_name, v_qty;
+    return;
+  end if;
+
+  v_ci := sibex.current_person_ci();
+  if coalesce(p_qnty, 0) <> 0 then
+    insert into sibex.movements (direction, note, client_op_id, delivered_by, grupo_id)
+      values ('in', sibex.actor_note('Recepción'), p_client_op_id, v_ci, v_grupo)
+      returning id into v_mid;
+    insert into sibex.movement_items (movement_id, product_id, qnty) values (v_mid, v_pid, abs(p_qnty));
+  end if;
+
+  update sibex.inventory
+     set last_counted_at = now(),
+         last_counted_by = coalesce((select name || ' ' || surname from sibex.persons where ci = v_ci), last_counted_by)
+   where product_id = v_pid and grupo_id = v_grupo;
+
+  select qnty into v_qty from sibex.inventory where product_id = v_pid and grupo_id = v_grupo;
+  return query select v_pid, v_client_id, v_name, v_qty;
+end;
+$$;
+grant execute on function sibex.add_product_to_grupo(text, text, text, bigint, integer, integer, integer, text, bigint) to authenticated;
+
+-- Soft-borra SOLO el conteo (inventory) de MI grupo para este producto — no
+-- toca el producto real ni el historial de movimientos, así que sigue
+-- disponible para el resto de los grupos que lo cuenten. "Restaurar" =
+-- volver a agregar el mismo producto vía add_product_to_grupo (revive la fila).
+create or replace function sibex.remove_product_from_grupo(p_product_client_id text, p_grupo_id bigint default null) returns void
+language plpgsql security definer set search_path = sibex as $$
+declare v_pid bigint; v_cat bigint; v_grupo bigint;
+begin
+  if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
+    raise exception 'Rol sin permiso para modificar el inventario';
+  end if;
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
+  end if;
+
+  select id, category_id into v_pid, v_cat from sibex.products where client_id = p_product_client_id;
+  if v_pid is null then return; end if;
+  if not sibex.can_access_category(v_cat) then
+    raise exception 'No tienes permiso para modificar insumos de esta categoría';
+  end if;
+
+  update sibex.inventory set deleted_at = now()
+   where product_id = v_pid and grupo_id = v_grupo and deleted_at is null;
+end;
+$$;
+grant execute on function sibex.remove_product_from_grupo(text, bigint) to authenticated;
+
 
 -- Lista personas CON inicio de sesión y su rol/área/estado — admin-only.
 -- Hace falta una RPC (no un SELECT REST normal) porque rol/área/baneo viven
@@ -1194,11 +1387,16 @@ end;
 $$;
 grant execute on function sibex.create_grupo(text) to authenticated;
 
+-- Revisión "productos multigrupo" (2026-08-25): un admin normal ya puede
+-- editar (renombrar + categorías vinculadas, éstas últimas vía create_category/
+-- delete_category) SU PROPIO grupo desde "Editar mi grupo" — antes esta RPC
+-- era estrictamente super_admin-only. super_admin sigue pudiendo editar
+-- cualquier grupo (can_access_grupo() ya lo cubre).
 create or replace function sibex.update_grupo(p_id bigint, p_nombre text) returns void
 language plpgsql security definer set search_path = sibex as $$
 begin
-  if not sibex.is_super_admin() then
-    raise exception 'Solo un super administrador puede editar grupos de extensión';
+  if not (sibex.is_admin() and sibex.can_access_grupo(p_id)) then
+    raise exception 'No tienes permiso para editar este grupo de extensión';
   end if;
   if p_nombre is null or btrim(p_nombre) = '' then
     raise exception 'El nombre del grupo es obligatorio';
@@ -1256,20 +1454,28 @@ grant execute on function sibex.update_own_profile(text, text, text, text) to au
 -- suma, la UI no ofrece restar ahí), 'conteo' = los controles +/−/cantidad
 -- de la pestaña Insumos. Egreso Rápido nunca pasa por acá, ver
 -- create_comanda_rapida (siempre "Egreso").
+-- Todas ganan resolución de p_grupo_id (mismo patrón que create_category) y
+-- operan sobre la fila (product_id, grupo_id) de inventory en vez de
+-- product_id solo (revisión "productos multigrupo", 2026-08-25).
 create or replace function sibex.apply_count(
   p_client_op_id       text,
   p_product_client_id  text,
   p_delta              integer,
-  p_origen             text
+  p_origen             text,
+  p_grupo_id           bigint default null
 ) returns integer
 language plpgsql security definer set search_path = sibex as $$
-declare v_pid bigint; v_cat bigint; v_mid bigint; v_qty integer; v_ci bigint; v_tipo text;
+declare v_pid bigint; v_cat bigint; v_grupo bigint; v_mid bigint; v_qty integer; v_ci bigint; v_tipo text;
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
   if p_origen not in ('ingreso', 'conteo') then
     raise exception 'Origen inválido: debe ser ingreso o conteo';
+  end if;
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
   end if;
   v_tipo := case p_origen when 'ingreso' then 'Recepción' else 'Conteo' end;
   v_ci := sibex.current_person_ci();
@@ -1281,19 +1487,22 @@ begin
   if not sibex.can_access_category(v_cat) then
     raise exception 'No tienes permiso para modificar insumos de esta categoría';
   end if;
+  if not exists (select 1 from sibex.inventory where product_id = v_pid and grupo_id = v_grupo) then
+    raise exception 'Este insumo no está vinculado a tu grupo de extensión';
+  end if;
 
   if p_client_op_id is not null and exists (
     select 1 from sibex.movements where client_op_id = p_client_op_id
   ) then
-    select qnty into v_qty from sibex.inventory where product_id = v_pid;
+    select qnty into v_qty from sibex.inventory where product_id = v_pid and grupo_id = v_grupo;
     return v_qty;
   end if;
 
   if p_delta <> 0 then
-    insert into sibex.movements (direction, note, client_op_id, delivered_by)
+    insert into sibex.movements (direction, note, client_op_id, delivered_by, grupo_id)
       values (
         case when p_delta > 0 then 'in'::sibex.movement_direction else 'out'::sibex.movement_direction end,
-        sibex.actor_note(v_tipo), p_client_op_id, v_ci
+        sibex.actor_note(v_tipo), p_client_op_id, v_ci, v_grupo
       ) returning id into v_mid;
 
     insert into sibex.movement_items (movement_id, product_id, qnty)
@@ -1303,20 +1512,24 @@ begin
   update sibex.inventory
      set last_counted_at = now(),
          last_counted_by = coalesce((select name || ' ' || surname from sibex.persons where ci = v_ci), last_counted_by)
-   where product_id = v_pid;
+   where product_id = v_pid and grupo_id = v_grupo;
 
-  select qnty into v_qty from sibex.inventory where product_id = v_pid;
+  select qnty into v_qty from sibex.inventory where product_id = v_pid and grupo_id = v_grupo;
   return v_qty;
 end;
 $$;
-grant execute on function sibex.apply_count(text, text, integer, text) to authenticated;
+grant execute on function sibex.apply_count(text, text, integer, text, bigint) to authenticated;
 
-create or replace function sibex.uncount_item(p_product_client_id text) returns void
+create or replace function sibex.uncount_item(p_product_client_id text, p_grupo_id bigint default null) returns void
 language plpgsql security definer set search_path = sibex as $$
-declare v_pid bigint; v_cat bigint;
+declare v_pid bigint; v_cat bigint; v_grupo bigint;
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
+  end if;
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
   end if;
 
   select id, category_id into v_pid, v_cat from sibex.products where client_id = p_product_client_id;
@@ -1326,25 +1539,29 @@ begin
   end if;
 
   delete from sibex.movements
-   where id in (select movement_id from sibex.movement_items where product_id = v_pid);
+   where grupo_id = v_grupo
+     and id in (select movement_id from sibex.movement_items where product_id = v_pid);
 
   update sibex.inventory
      set qnty = 0, last_counted_at = null, last_counted_by = null
-   where product_id = v_pid;
+   where product_id = v_pid and grupo_id = v_grupo;
 end;
 $$;
-grant execute on function sibex.uncount_item(text) to authenticated;
+grant execute on function sibex.uncount_item(text, bigint) to authenticated;
 
 create or replace function sibex.delete_count(p_client_op_id text) returns void
 language plpgsql security definer set search_path = sibex as $$
-declare v_mid bigint; v_product_ids bigint[];
+declare v_mid bigint; v_grupo bigint; v_product_ids bigint[];
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para modificar el inventario';
   end if;
 
-  select id into v_mid from sibex.movements where client_op_id = p_client_op_id;
+  select id, grupo_id into v_mid, v_grupo from sibex.movements where client_op_id = p_client_op_id;
   if v_mid is null then return; end if;
+  if not sibex.can_access_grupo(v_grupo) then
+    raise exception 'No tienes permiso para modificar movimientos de este grupo';
+  end if;
 
   select array_agg(product_id) into v_product_ids
     from sibex.movement_items where movement_id = v_mid;
@@ -1363,13 +1580,13 @@ begin
     last_counted_at = (
       select max(m.occurred_at) from sibex.movements m
       join sibex.movement_items mi on mi.movement_id = m.id
-      where mi.product_id = i.product_id),
+      where mi.product_id = i.product_id and m.grupo_id = i.grupo_id),
     last_counted_by = (
       select m.note from sibex.movements m
       join sibex.movement_items mi on mi.movement_id = m.id
-      where mi.product_id = i.product_id
+      where mi.product_id = i.product_id and m.grupo_id = i.grupo_id
       order by m.occurred_at desc limit 1)
-  where i.product_id = any(v_product_ids);
+  where i.product_id = any(v_product_ids) and i.grupo_id = v_grupo;
 end;
 $$;
 grant execute on function sibex.delete_count(text) to authenticated;
@@ -1393,15 +1610,21 @@ grant execute on function sibex.delete_count(text) to authenticated;
 --  solicitante, quién autorizó (creador), ítems+cantidad, id y fecha/hora.
 -- ══════════════════════════════════════════════════════════════════════════
 
+-- p_grupo_id (mismo patrón que create_category); se aprovecha para sumar
+-- 'super_admin' al chequeo de rol (antes solo admin/coordinador — mismo
+-- criterio que el patch 2026-08-24 ya aplicó a apply_count/uncount_item/
+-- delete_count/merge_product, sin esto un super_admin no podría usar Egreso
+-- Rápido en ningún grupo).
 create or replace function sibex.create_comanda_rapida(
   p_solicitante_ci  bigint,
   p_items           jsonb,   -- [{"product_id": bigint, "qnty": int}, ...]
   p_client_op_id    text default null,
-  p_note            text default null
+  p_note            text default null,
+  p_grupo_id        bigint default null
 ) returns table(comanda_id bigint, movement_id bigint)
 language plpgsql security definer set search_path = sibex as $$
 declare
-  v_role text; v_ci bigint; v_actor_nombre text; v_autorizado_por text;
+  v_role text; v_ci bigint; v_actor_nombre text; v_autorizado_por text; v_grupo bigint;
   v_comanda_id bigint; v_movement_id bigint;
   v_expected int; v_inserted int;
   v_pid bigint; v_pname text; v_punidad text; v_pcat bigint; v_qty int; v_disponible int;
@@ -1409,8 +1632,12 @@ declare
 begin
   v_role := sibex.current_role();
   v_ci := sibex.current_person_ci();
-  if v_role not in ('admin', 'coordinador') then
+  if v_role not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para registrar una entrega';
+  end if;
+  v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
+  if v_grupo is null then
+    raise exception 'Falta indicar el grupo de extensión';
   end if;
 
   -- Idempotencia: reintento con el mismo client_op_id devuelve el mismo resultado.
@@ -1450,12 +1677,12 @@ begin
     solicitante_ci, estudiante_resp_ci, responsable_entrega_ci,
     aprobado_por_ci, aprobado_por, created_by_ci, created_by,
     fecha, hora_salida, hora_llegada,
-    status, origen, processed_at, notas, client_op_id, autorizado_por
+    status, origen, processed_at, notas, client_op_id, autorizado_por, grupo_id
   ) values (
     p_solicitante_ci, v_ci, v_ci,
     v_ci, v_actor_nombre, v_ci, v_actor_nombre,
     current_date, current_time, current_time,
-    'completada', 'rapida', now(), p_note, p_client_op_id, v_autorizado_por
+    'completada', 'rapida', now(), p_note, p_client_op_id, v_autorizado_por, v_grupo
   ) returning id into v_comanda_id;
 
   -- comanda_items + chequeo temprano de stock y categoría por ítem.
@@ -1476,7 +1703,7 @@ begin
       raise exception 'No tienes permiso para egresar insumos de esta categoría (%)', v_pname;
     end if;
 
-    select qnty into v_disponible from sibex.inventory where product_id = v_pid for update;
+    select qnty into v_disponible from sibex.inventory where product_id = v_pid and grupo_id = v_grupo for update;
     if v_disponible is null or v_disponible < v_qty then
       raise exception 'No hay suficiente disponibilidad de "%" (disponible: %, solicitado: %)',
         v_pname, coalesce(v_disponible, 0), v_qty;
@@ -1490,8 +1717,8 @@ begin
   -- (acá, Tipo = 'Egreso') — p_note es texto libre del formulario, va aparte
   -- en comandas.notas (arriba), nunca pisa este formato. Sin destination por
   -- el mismo motivo que ubicacion_id arriba (columna ya nullable).
-  insert into sibex.movements (direction, note, client_op_id, occurred_at, delivered_by)
-    values ('out', sibex.actor_note('Egreso'), p_client_op_id, now(), v_ci)
+  insert into sibex.movements (direction, note, client_op_id, occurred_at, delivered_by, grupo_id)
+    values ('out', sibex.actor_note('Egreso'), p_client_op_id, now(), v_ci, v_grupo)
     returning id into v_movement_id;
 
   update sibex.comandas set movement_id = v_movement_id where id = v_comanda_id;
@@ -1513,17 +1740,22 @@ begin
   return query select v_comanda_id, v_movement_id;
 end;
 $$;
-grant execute on function sibex.create_comanda_rapida(bigint, jsonb, text, text) to authenticated;
+grant execute on function sibex.create_comanda_rapida(bigint, jsonb, text, text, bigint) to authenticated;
 
 -- Fusiona un insumo duplicado en otro ya existente (reatribuye TODO el
--- historial de movement_items al destino, vacía y borra lógicamente el
--- origen) — usado por "Renombrar" en Conteo cuando el nuevo nombre coincide
--- con un insumo ya existente.
+-- historial de movement_items/comanda_items al destino, y ahora fusiona
+-- TODAS las filas de inventory del origen — por cada grupo: si el destino
+-- ya tiene fila para ese grupo, suma qnty; si no, repunta la fila — y
+-- borra lógicamente el origen. Usado por "Renombrar" en Conteo cuando el
+-- nuevo nombre coincide con un insumo ya existente. Sigue siendo una
+-- operación de catálogo COMPARTIDO: si la categoría está vinculada a más de
+-- un grupo, fusionar puede afectar el conteo de otro grupo — consistente
+-- con el espíritu de catálogo compartido y estandarizado de esta revisión.
 create or replace function sibex.merge_product(
   p_source_client_id text, p_target_client_id text
 ) returns void
 language plpgsql security definer set search_path = sibex as $$
-declare v_source bigint; v_target bigint; v_source_cat bigint; v_target_cat bigint;
+declare v_source bigint; v_target bigint; v_source_cat bigint; v_target_cat bigint; r record;
 begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para fusionar insumos';
@@ -1538,8 +1770,17 @@ begin
   end if;
   if v_source = v_target then return; end if;
 
+  for r in select * from sibex.inventory where product_id = v_source loop
+    if exists (select 1 from sibex.inventory where product_id = v_target and grupo_id = r.grupo_id) then
+      update sibex.inventory set qnty = qnty + r.qnty where product_id = v_target and grupo_id = r.grupo_id;
+    else
+      update sibex.inventory set product_id = v_target where product_id = v_source and grupo_id = r.grupo_id;
+    end if;
+  end loop;
+  delete from sibex.inventory where product_id = v_source;
+
   update sibex.movement_items set product_id = v_target where product_id = v_source;
-  update sibex.inventory set qnty = 0 where product_id = v_source;
+  update sibex.comanda_items set producto_id = v_target where producto_id = v_source;
   update sibex.products set deleted_at = now(), updated_at = now() where id = v_source;
 end;
 $$;
@@ -1580,7 +1821,7 @@ language plpgsql security definer set search_path = sibex as $$
 declare v_role text;
 begin
   v_role := sibex.current_role();
-  if v_role not in ('admin', 'coordinador') then
+  if v_role not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para ver despachos';
   end if;
 
@@ -1597,6 +1838,7 @@ begin
       and c.status = 'por_despachar'
       and c.deleted_at is null
       and sibex.can_access_category(pr.category_id)
+      and sibex.can_access_grupo(c.grupo_id)
     order by c.created_at asc;
 end;
 $$;
@@ -1606,19 +1848,19 @@ create or replace function sibex.marcar_despacho_entregado(p_item_id bigint) ret
 language plpgsql security definer set search_path = sibex as $$
 declare
   v_role text; v_ci bigint; v_actor_nombre text;
-  v_categoria bigint; v_comanda_id integer;
+  v_categoria bigint; v_comanda_id integer; v_comanda_grupo bigint;
   v_comanda_status sibex.comanda_status; v_pendientes integer;
 begin
   v_role := sibex.current_role();
   v_ci := sibex.current_person_ci();
-  if v_role not in ('admin', 'coordinador') then
+  if v_role not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para marcar despachos';
   end if;
 
   select name || ' ' || surname into v_actor_nombre from sibex.persons where ci = v_ci;
 
-  select pr.category_id, ci.comanda_id, c.status
-    into v_categoria, v_comanda_id, v_comanda_status
+  select pr.category_id, ci.comanda_id, c.status, c.grupo_id
+    into v_categoria, v_comanda_id, v_comanda_status, v_comanda_grupo
   from sibex.comanda_items ci
   join sibex.products pr on pr.id = ci.producto_id
   join sibex.comandas c on c.id = ci.comanda_id
@@ -1628,7 +1870,7 @@ begin
   if v_comanda_id is null then
     raise exception 'Ítem de comanda no encontrado (o no pertenece a un producto del catálogo).';
   end if;
-  if not sibex.can_access_category(v_categoria) then
+  if not sibex.can_access_category(v_categoria) or not sibex.can_access_grupo(v_comanda_grupo) then
     raise exception 'No tienes permiso para despachar ítems de esta área.';
   end if;
   if v_comanda_status <> 'por_despachar' then
@@ -1657,6 +1899,7 @@ grant execute on function sibex.marcar_despacho_entregado(bigint) to authenticat
 
 alter table sibex.grupos enable row level security;
 alter table sibex.categories enable row level security;
+alter table sibex.category_grupos enable row level security;
 alter table sibex.products enable row level security;
 alter table sibex.inventory enable row level security;
 alter table sibex.movements enable row level security;
@@ -1711,9 +1954,14 @@ create policy products_update on sibex.products for update
   using (sibex.can_access_category(category_id))
   with check (sibex.can_access_category(category_id));
 
+-- inventory ahora carga su propio grupo_id (revisión "productos multigrupo",
+-- 2026-08-25) — la fila solo es visible si además de la categoría, el actor
+-- puede tocar ESE grupo puntual (una categoría puede estar vinculada a más
+-- de un grupo, así que can_access_category() sola ya no alcanza para esto).
 create policy inventory_select on sibex.inventory for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = inventory.product_id and sibex.can_access_category(p.category_id))
+    and sibex.can_access_grupo(inventory.grupo_id)
   );
 
 -- OJO: a diferencia de antes, NO hay un atajo "is_admin() or general" acá —
@@ -1721,9 +1969,12 @@ create policy inventory_select on sibex.inventory for select
 -- CUALQUIER grupo). can_access_category() ya cubre admin/general/coordinador
 -- por dentro (ver sección 8), así que el exists() alcanza para los tres
 -- casos — todo movimiento tiene ≥1 línea garantizado por movement_has_items.
+-- movements.grupo_id es propio (denormalizado): se chequea aparte, mismo
+-- motivo que inventory arriba.
 create policy movements_select on sibex.movements for select
   to authenticated using (
-    exists (
+    sibex.can_access_grupo(movements.grupo_id)
+    and exists (
       select 1 from sibex.movement_items mi join sibex.products p on p.id = mi.product_id
       where mi.movement_id = movements.id and sibex.can_access_category(p.category_id)
     )
@@ -1732,6 +1983,7 @@ create policy movements_select on sibex.movements for select
 create policy movement_items_select on sibex.movement_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = movement_items.product_id and sibex.can_access_category(p.category_id))
+    and exists (select 1 from sibex.movements m where m.id = movement_items.movement_id and sibex.can_access_grupo(m.grupo_id))
   );
 
 create policy requests_select on sibex.requests for select
@@ -1740,14 +1992,15 @@ create policy requests_select on sibex.requests for select
   );
 
 -- comandas/comanda_items (Egreso Rápido, sección 9b) — mismo criterio:
--- visibles si al menos un ítem cae en la categoría del coordinador. Sin
--- policy de escritura: create_comanda_rapida/marcar_despacho_entregado son
--- SECURITY DEFINER y validan categoría por dentro.
--- Mismo ajuste que movements_select: sin atajo "is_admin() or general" (se
--- iba de lado del grupo), can_access_category() ya cubre los tres casos.
+-- visibles si al menos un ítem cae en la categoría del coordinador Y el
+-- actor puede tocar el grupo propio de la comanda (comandas.grupo_id, mismo
+-- motivo que movements arriba). Sin policy de escritura:
+-- create_comanda_rapida/marcar_despacho_entregado son SECURITY DEFINER y
+-- validan categoría+grupo por dentro.
 create policy comandas_select on sibex.comandas for select
   to authenticated using (
-    exists (
+    sibex.can_access_grupo(comandas.grupo_id)
+    and exists (
       select 1 from sibex.comanda_items ci join sibex.products p on p.id = ci.producto_id
       where ci.comanda_id = comandas.id and sibex.can_access_category(p.category_id)
     )
@@ -1755,6 +2008,7 @@ create policy comandas_select on sibex.comandas for select
 create policy comanda_items_select on sibex.comanda_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = comanda_items.producto_id and sibex.can_access_category(p.category_id))
+    and exists (select 1 from sibex.comandas c where c.id = comanda_items.comanda_id and sibex.can_access_grupo(c.grupo_id))
   );
 
 -- grupos: cualquier sesión lee (hace falta para poblar el switcher de grupo
@@ -1765,15 +2019,30 @@ create policy grupos_select on sibex.grupos for select
 create policy grupos_super_admin_write on sibex.grupos for all
   to authenticated using (sibex.is_super_admin()) with check (sibex.is_super_admin());
 
--- categories: lectura/escritura acotada al grupo dueño de la categoría
--- (super_admin: todos) — en la práctica se escribe vía las RPC de 8b, pero
--- se deja la policy por si algo escribe REST.
+-- categories: catálogo COMPARTIDO (revisión "productos multigrupo",
+-- 2026-08-25) — ya no pertenece a un único grupo, así que la lectura queda
+-- abierta a cualquier sesión (nombres no son información sensible; hace
+-- falta lectura amplia para el buscador de categorías entre grupos, mismo
+-- criterio que grupos_select). La escritura real (crear/vincular/
+-- desvincular con sus chequeos de grupo/conteos) vive en las RPC de la
+-- sección 8b — acá solo se deja abierto el INSERT/UPDATE liso para
+-- cualquier cosa que escriba por REST directo; el DELETE queda SIN policy
+-- ni grant a propósito (ver sección 12): la limpieza de huérfanas solo
+-- puede pasar dentro de delete_category, nunca un DELETE sin criterio.
 create policy categories_select on sibex.categories for select
-  to authenticated using (sibex.can_access_grupo(grupo_id));
-create policy categories_admin_write on sibex.categories for all
-  to authenticated
-  using (sibex.is_admin() and sibex.can_access_grupo(grupo_id))
-  with check (sibex.is_admin() and sibex.can_access_grupo(grupo_id));
+  to authenticated using (true);
+create policy categories_admin_insert on sibex.categories for insert
+  to authenticated with check (sibex.is_admin());
+create policy categories_admin_update on sibex.categories for update
+  to authenticated using (sibex.is_admin()) with check (sibex.is_admin());
+
+-- category_grupos: M2M nueva — lectura abierta (mismo criterio que
+-- categories/grupos, hace falta para pintar "categorías vinculadas a este
+-- grupo" en el modal Editar grupo y para el buscador de categorías); sin
+-- policy de escritura — se manipula solo dentro de create_category/
+-- delete_category (SECURITY DEFINER).
+create policy category_grupos_select on sibex.category_grupos for select
+  to authenticated using (true);
 
 -- 11.2 — checkpoints: solo admin (mismo criterio que ya tenía la app,
 -- "Máquina del Tiempo" restringida a admin desde 2026-07-27). No sincroniza
@@ -1848,11 +2117,10 @@ end $$;
 --      hasPlatformAccess() del sistema viejo, que exigía login para TODO).
 --
 --      service_role (la Admin API que usa supabase/functions/manage-users)
---      TAMBIÉN necesita estos GRANTS explícitos acá — a diferencia de
---      `public`, un schema nuevo como `sibex` no le da acceso automático
---      por default (bypassa RLS, pero no bypassa GRANT/REVOKE). Sin esto,
---      cualquier llamada de manage-users contra `sibex` falla con
---      "permission denied for schema sibex" (42501).
+--      normalmente ya tiene acceso automático a `sibex` en un proyecto
+--      Supabase estándar, pero se deja explícito acá también (mismo
+--      criterio que el espejo en sibex-schema-install.sql, donde SÍ hace
+--      falta — un schema nuevo no le da ese acceso gratis).
 -- ══════════════════════════════════════════════════════════════════════════
 
 grant usage on schema sibex to service_role;
@@ -1865,11 +2133,13 @@ grant insert, update on
   sibex.products, sibex.persons, sibex.phones, sibex.person_status,
   sibex.comms, sibex.checkpoints, sibex.categories, sibex.grupos
 to authenticated;
--- Solo checkpoints/categories tienen policy de DELETE (admin-only) — comms
--- nunca la tuvo ni en el esquema viejo (sin flujo de "borrar comunicado" en
--- la app), así que no se otorga acá (otorgarlo sin policy sería ruido: RLS
--- lo bloquearía igual).
-grant delete on sibex.checkpoints, sibex.categories to authenticated;
+-- Solo checkpoints tiene policy de DELETE (admin-only) — comms nunca la tuvo
+-- ni en el esquema viejo (sin flujo de "borrar comunicado" en la app), y
+-- categories YA NO la tiene a propósito (revisión "productos multigrupo":
+-- catálogo compartido, el borrado de una categoría huérfana solo puede
+-- pasar dentro de delete_category) — otorgarlo sin policy sería ruido: RLS
+-- lo bloquearía igual.
+grant delete on sibex.checkpoints to authenticated;
 -- comandas/comanda_items NO reciben INSERT/UPDATE/DELETE directo — todo
 -- pasa por create_comanda_rapida/marcar_despacho_entregado (SECURITY
 -- DEFINER, sección 9b/10), igual criterio que inventory/movements/movement_items.

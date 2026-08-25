@@ -56,23 +56,24 @@ const _BOX = _svg(`<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 
 // necesidad de guardar el color en la BD).
 const _PALETTE = ['#fb923c','#eab308','#a78bfa','#d946ef','#22d3ee','#60a5fa','#f472b6','#38bdf8','#34d399','#fbbf24','#818cf8','#f87171','#94a3b8'];
 
-// Mapa {id → {nombre, grupo_id}} de las categorías cargadas de la BD
-// (store.loadCategories() lo puebla al iniciar y tras cada cambio) — todo lo
-// demás en este módulo se deriva de acá, nunca de una lista hardcodeada.
-// grupo_id solo importa para super_admin (store.js#visibleItems()/filtros
-// por grupo) — admin/coordinador ya vienen acotados a su grupo del lado
-// del servidor (RLS), no lo necesitan para nada.
+// Mapa {id → nombre} de las categorías cargadas de la BD (store.loadCategories()
+// lo puebla al iniciar y tras cada cambio) — todo lo demás en este módulo se
+// deriva de acá, nunca de una lista hardcodeada.
+// Catálogo COMPARTIDO entre grupos (revisión "productos multigrupo",
+// 2026-08-25): una categoría ya no pertenece a un único grupo (ver
+// category_grupos en el esquema) — el grupo de un conteo vive ahora en el
+// propio ítem local (item.grupoId, ver store.js), no se deriva más de la
+// categoría.
 let _categorias = new Map();
 export function setCategories(list) {
-  _categorias = new Map((list || []).map(c => [String(c.id), { nombre: c.nombre, grupoId: c.grupo_id ?? null }]));
+  _categorias = new Map((list || []).map(c => [String(c.id), c.nombre]));
 }
 export function allCategories() {
-  return [..._categorias.entries()].map(([id, c]) => ({ id, nombre: c.nombre, grupo_id: c.grupoId }));
+  return [..._categorias.entries()].map(([id, nombre]) => ({ id, nombre }));
 }
 
 export function catIcon()      { return _BOX; }
-export function catLabel(id)   { return _categorias.get(String(id))?.nombre || 'Sin categoría'; }
-export function catGrupo(id)   { return _categorias.get(String(id))?.grupoId ?? null; }
+export function catLabel(id)   { return _categorias.get(String(id)) || 'Sin categoría'; }
 export function catColor(id) {
   const n = Number(id);
   if (!Number.isFinite(n)) return '#9ca3af';

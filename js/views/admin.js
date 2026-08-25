@@ -29,6 +29,18 @@ async function _rpc(name, body) {
   return data;
 }
 
+// Un admin normal nunca carga store.grupos (solo relevante para super_admin,
+// ver store.js#init) — hace falta este fetch puntual para prellenar el
+// nombre de SU PROPIO grupo al abrir "Editar mi grupo".
+async function _fetchGrupoNombre(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/grupos?select=nombre&id=eq.${id}`, { headers: _headers() });
+    if (!res.ok) return '';
+    const rows = await res.json();
+    return rows?.[0]?.nombre || '';
+  } catch { return ''; }
+}
+
 let _onDataChange = null;   // callback para refrescar la vista activa
 
 export function initAdmin({ onDataChange } = {}) {
@@ -195,15 +207,10 @@ export async function openPanel() {
       ${auth.hasAdminRights() ? `
       <div class="adm-sec">
         <div class="adm-sec-top">
-          <span class="adm-sec-title">Categorías de insumos</span>
+          <span class="adm-sec-title">Mi grupo de extensión</span>
         </div>
-        <div class="adm-note" style="margin:0 0 10px;">Cada categoría es el "área" que puede tener un coordinador. Borrar una le quita el acceso a sus coordinadores de inmediato (quedan sin rol asignado, sin perder su registro).${auth.isSuperAdmin() ? ' Se crean dentro del grupo elegido en la barra superior.' : ''}</div>
-        ${auth.isSuperAdmin() && store.viewingGrupoId == null ? `<div class="adm-note">Elegí un grupo de extensión en la barra superior para ver/crear sus categorías.</div>` : `
-        <div class="adm-cp-list" id="adm-cat-list"></div>
-        <form id="adm-cat-form" style="display:flex; gap:8px; margin-top:10px;">
-          <input class="adm-field" style="flex:1; margin:0;" id="adm-cat-nombre" placeholder="Nombre de la categoría nueva" maxlength="100">
-          <button type="submit" class="adm-mini">+ Agregar</button>
-        </form>`}
+        <div class="adm-note" style="margin:0 0 10px;">Nombre y categorías vinculadas de tu grupo — cada categoría es el "área" que puede tener un coordinador.</div>
+        <button class="adm-btn" id="adm-editar-grupo">Editar mi grupo</button>
       </div>
 
       <div class="adm-sec">
@@ -219,7 +226,18 @@ export async function openPanel() {
 
   if (auth.hasAdminRights()) {
     _paintCpList(ov);
-    if (!auth.isSuperAdmin() || store.viewingGrupoId != null) _wireCategorias(ov);
+    ov.querySelector('#adm-editar-grupo')?.addEventListener('click', async () => {
+      const grupoId = auth.isSuperAdmin() ? store.viewingGrupoId : auth.grupo();
+      if (grupoId == null) {
+        toast.err('Elegí un grupo de extensión en la barra superior primero.');
+        return;
+      }
+      // store.grupos solo se carga para super_admin — un admin normal
+      // necesita el nombre de SU grupo aparte para prellenar el campo.
+      const nombre = store.grupos.find(g => String(g.id) === String(grupoId))?.nombre
+        || await _fetchGrupoNombre(grupoId);
+      openEditGrupoModal({ id: grupoId, nombre });
+    });
   }
   _cargarPerfil(ov);
 
@@ -313,82 +331,166 @@ async function _cambiarPassword(e) {
   }
 }
 
-// ── Categorías (admin/super_admin, ver update_product_category/
-// create_category/update_category/delete_category en
-// supabase/new-project-schema.sql §8b) — un super_admin siempre actúa
-// dentro del grupo elegido en la barra superior (store.viewingGrupoId, ya
-// validado antes de llegar acá: ver el `if` en openPanel()).
-async function _wireCategorias(ov) {
-  await store.loadCategories();
-  _paintCatList(ov);
+// ── Editar grupo (nombre + categorías vinculadas) — reemplaza el antiguo
+// "Gestionar" de views/grupos.js y la sección "Categorías de insumos" de
+// este mismo panel. Un admin normal puede editar SU PROPIO grupo (ver
+// "Editar mi grupo" arriba); super_admin puede editar cualquiera (ver
+// views/grupos.js, botón "Editar" en cada tarjeta). Categorías: catálogo
+// COMPARTIDO entre grupos (revisión "productos multigrupo", 2026-08-25) —
+// vincular busca-y-reutiliza (store.createCategory), desvincular solo
+// bloquea si hay conteos vivos EN ESTE grupo (con opción de forzar el
+// borrado lógico de esos conteos), nunca borra la categoría real mientras
+// algún otro grupo la tenga vinculada.
+export function openEditGrupoModal(grupo, { onChange } = {}) {
+  const ov = modal(`
+    <div class="adm-box adm-box-lg">
+      <div class="adm-head">
+        <div>
+          <div class="adm-title">Editar grupo</div>
+          <div class="adm-sub" id="eg-sub">${escHtml(grupo.nombre || '')}</div>
+        </div>
+        <button class="adm-x" data-close>&times;</button>
+      </div>
 
-  ov.querySelector('#adm-cat-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const inp = ov.querySelector('#adm-cat-nombre');
-    const nombre = inp.value.trim();
-    if (!nombre) return;
+      <div class="adm-field">
+        <label>Nombre del grupo</label>
+        <input id="eg-nombre" type="text" maxlength="100" value="${escHtml(grupo.nombre || '')}">
+      </div>
+      <div class="adm-err" id="eg-nombre-err"></div>
+      <button class="adm-btn adm-btn-primary" id="eg-nombre-save" style="margin-bottom:18px;">Guardar nombre</button>
+
+      <div class="adm-sec-top">
+        <span class="adm-sec-title">Categorías vinculadas</span>
+      </div>
+      <div class="adm-note" style="margin:0 0 10px;">El "área" que puede tener un coordinador de este grupo. Desvincular no borra la categoría real (sigue disponible para otros grupos que la usen) — solo bloquea si tu grupo todavía tiene insumos con conteo en ella.</div>
+      <div class="adm-cp-list" id="eg-cat-list"><div class="adm-cp-empty">Cargando…</div></div>
+
+      <div class="adm-field" style="margin-top:14px;">
+        <label>Vincular categoría (nueva o existente)</label>
+        <input id="eg-cat-input" type="text" autocomplete="off" placeholder="Ej. Alimentos" maxlength="100">
+      </div>
+      <div class="ren-sugg" id="eg-cat-sugg"></div>
+      <div class="adm-err" id="eg-cat-err"></div>
+      <button class="adm-btn" id="eg-cat-add">+ Vincular / crear</button>
+    </div>`);
+
+  const nombreInp = ov.querySelector('#eg-nombre');
+  const nombreErr = ov.querySelector('#eg-nombre-err');
+  ov.querySelector('#eg-nombre-save').addEventListener('click', async () => {
+    nombreErr.textContent = '';
+    const val = nombreInp.value.trim();
+    if (!val) { nombreErr.textContent = 'El nombre es obligatorio.'; return; }
     try {
-      await store.createCategory(nombre, auth.isSuperAdmin() ? store.viewingGrupoId : undefined);
-      inp.value = '';
-      _paintCatList(ov);
-      toast.ok('Categoría creada.');
+      await store.renameGrupo(grupo.id, val);
+      grupo.nombre = val;
+      ov.querySelector('#eg-sub').textContent = val;
+      toast.ok('Grupo renombrado.');
+      onChange?.();
     } catch (ex) {
-      toast.err(ex.message || 'No se pudo crear la categoría.');
+      nombreErr.textContent = ex.message || 'No se pudo renombrar el grupo.';
     }
   });
-}
 
-function _paintCatList(ov) {
-  const box = ov.querySelector('#adm-cat-list');
-  if (!box) return;
-  if (!store.categories.length) { box.innerHTML = `<div class="adm-cp-empty">Sin categorías todavía — crea la primera abajo.</div>`; return; }
+  const catInp = ov.querySelector('#eg-cat-input');
+  const catSugg = ov.querySelector('#eg-cat-sugg');
+  const catErr = ov.querySelector('#eg-cat-err');
 
-  const cats = [...store.categories].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-  box.innerHTML = cats.map(c => `
-    <div class="adm-cp" data-id="${c.id}">
-      <div class="adm-cp-info">
-        <div class="adm-cp-date" id="cat-label-${c.id}">${escHtml(c.nombre)}</div>
-      </div>
-      <button class="adm-mini" data-rename="${c.id}">Renombrar</button>
-      <button class="adm-mini adm-mini-x" data-del="${c.id}">×</button>
-    </div>`).join('');
+  async function _paintCatList() {
+    const box = ov.querySelector('#eg-cat-list');
+    if (!box) return;
+    await store.loadAllCategoryNames();
+    const cats = await store.categoriesForGrupo(grupo.id);
+    if (!cats.length) { box.innerHTML = `<div class="adm-cp-empty">Sin categorías vinculadas todavía — agrega una abajo.</div>`; return; }
+    box.innerHTML = cats.map(c => `
+      <div class="adm-cp" data-id="${c.id}">
+        <div class="adm-cp-info">
+          <div class="adm-cp-date">${escHtml(c.nombre)}</div>
+        </div>
+        <button class="adm-mini" data-rename="${c.id}">Renombrar</button>
+        <button class="adm-mini adm-mini-x" data-unlink="${c.id}">×</button>
+      </div>`).join('');
 
-  box.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', async () => {
-    const c = store.categories.find(x => String(x.id) === b.dataset.rename);
-    const nuevo = await promptDialog({
-      title: 'Renombrar categoría',
-      label: 'Nuevo nombre',
-      value: c?.nombre || '',
-      confirmText: 'Renombrar',
+    box.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', async () => {
+      const c = cats.find(x => String(x.id) === b.dataset.rename);
+      const nuevo = await promptDialog({
+        title: 'Renombrar categoría', label: 'Nuevo nombre (afecta a todos los grupos que la usan)',
+        value: c?.nombre || '', confirmText: 'Renombrar',
+      });
+      if (nuevo == null) return;
+      const val = nuevo.trim();
+      if (!val || val === c.nombre) return;
+      try {
+        await store.renameCategory(c.id, val);
+        toast.ok('Categoría renombrada.');
+        _paintCatList();
+      } catch (ex) {
+        toast.err(ex.message || 'No se pudo renombrar la categoría.');
+      }
+    }));
+
+    box.querySelectorAll('[data-unlink]').forEach(b => b.addEventListener('click', async () => {
+      const c = cats.find(x => String(x.id) === b.dataset.unlink);
+      const ok = await confirmDialog({
+        title: 'Desvincular categoría',
+        body: `¿Desvincular "${escHtml(c?.nombre)}" de este grupo? Si tu grupo tiene coordinadores en esta categoría, quedan sin acceso de inmediato.`,
+        confirmText: 'Desvincular', danger: true,
+      });
+      if (!ok) return;
+      try {
+        await store.deleteCategory(c.id, { grupoId: grupo.id });
+        toast.ok('Categoría desvinculada.');
+        _paintCatList();
+      } catch (ex) {
+        // El servidor bloquea si hay conteos vivos — ofrece forzar el
+        // borrado lógico de esos conteos en vez de solo mostrar el error.
+        const force = await confirmDialog({
+          title: 'Hay insumos con conteo',
+          body: `${escHtml(ex.message || '')} ¿Eliminar (borrado lógico, reversible) esos conteos y desvincular igual?`,
+          confirmText: 'Eliminar y desvincular', danger: true,
+        });
+        if (!force) return;
+        try {
+          await store.deleteCategory(c.id, { grupoId: grupo.id, force: true });
+          toast.ok('Conteos eliminados y categoría desvinculada.');
+          _paintCatList();
+        } catch (ex2) {
+          toast.err(ex2.message || 'No se pudo desvincular la categoría.');
+        }
+      }
+    }));
+  }
+
+  function _paintCatSugg(q) {
+    const matches = store.searchCategoryNames(q);
+    catSugg.innerHTML = matches.map(c => `
+      <button type="button" class="ren-sugg-item" data-nombre="${escHtml(c.nombre)}">
+        <span class="ren-sugg-name">${escHtml(c.nombre)}</span>
+      </button>`).join('');
+    catSugg.querySelectorAll('.ren-sugg-item').forEach(b => {
+      b.onclick = () => { catInp.value = b.dataset.nombre; catSugg.innerHTML = ''; };
     });
-    if (nuevo == null) return;
-    const val = nuevo.trim();
-    if (!val || val === c.nombre) return;
-    try {
-      await store.renameCategory(c.id, val);
-      _paintCatList(ov);
-      toast.ok('Categoría renombrada.');
-    } catch (ex) {
-      toast.err(ex.message || 'No se pudo renombrar la categoría.');
-    }
-  }));
+  }
+  let t;
+  catInp.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => _paintCatSugg(catInp.value.trim()), 110);
+  });
 
-  box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
-    const c = store.categories.find(x => String(x.id) === b.dataset.del);
-    const ok = await confirmDialog({
-      title: 'Eliminar categoría',
-      body: `¿Eliminar la categoría "${escHtml(c?.nombre)}"? Si tiene insumos asignados, se rechazará — reasígnalos primero. Cualquier coordinador de esta categoría queda sin acceso al sistema de inmediato.`,
-      confirmText: 'Eliminar', danger: true,
-    });
-    if (!ok) return;
+  ov.querySelector('#eg-cat-add').addEventListener('click', async () => {
+    catErr.textContent = '';
+    const val = catInp.value.trim();
+    if (!val) { catErr.textContent = 'Escribe un nombre.'; return; }
     try {
-      await store.deleteCategory(c.id);
-      _paintCatList(ov);
-      toast.ok('Categoría eliminada.');
+      await store.createCategory(val, grupo.id);
+      catInp.value = ''; catSugg.innerHTML = '';
+      toast.ok('Categoría vinculada.');
+      _paintCatList();
     } catch (ex) {
-      toast.err(ex.message || 'No se pudo eliminar la categoría.');
+      catErr.textContent = ex.message || 'No se pudo vincular la categoría.';
     }
-  }));
+  });
+
+  _paintCatList();
 }
 
 function _paintCpList(ov) {

@@ -4,7 +4,7 @@ import { db }                    from './db.js';
 import { sync, tombstones }      from './sync.js';
 import { auth }                  from './auth.js';
 import { CATALOGO }       from './seed.js';
-import { nowISO, uid, normSearch, catLabel, catGrupo, setCategories, allCategories } from './helpers.js';
+import { nowISO, uid, normSearch, catLabel, setCategories, allCategories } from './helpers.js';
 import { SUPABASE_URL } from './config.js';
 import { DB_SCHEMA } from './env-config.js';
 
@@ -46,16 +46,25 @@ function _conTag(nombre) {
   return tag ? `${nombre} · ${tag}` : nombre;
 }
 
+// Clave local compuesta de un ítem — un producto (catálogo COMPARTIDO entre
+// grupos, revisión "productos multigrupo" 2026-08-25) puede tener un conteo
+// (inventory) por cada grupo que lo use, así que la clave local ya no puede
+// ser solo el client_id del producto.
+function _localId(productClientId, grupoId) {
+  return `${productClientId}::${grupoId}`;
+}
+
 export const store = {
-  items: [],          // catálogo con cantidad contada
+  items: [],          // catálogo con cantidad contada — 1 fila por (producto, grupo)
   logs: [],           // bitácora de registros de conteo (append-only)
-  categories: [],      // [{id, nombre, grupo_id}] — categorías vigentes (dinámicas, ver helpers.js)
+  categories: [],      // [{id, nombre}] — categorías vinculadas al grupo activo (ver loadCategories)
   grupos: [],          // [{id, nombre}] — grupos de extensión, solo relevante para super_admin
   // Grupo que un super_admin eligió mirar (null = "Todos") — persistido para
   // sobrevivir un refresh. admin/coordinador nunca lo tocan: su alcance ya
   // viene fijo del servidor (RLS por auth.grupo()).
   viewingGrupoId: _loadViewingGrupo(),
   contadorNombre: '',
+  _allCategoryNames: [],   // catálogo GLOBAL de nombres de categoría (cualquier grupo) — buscador de creación
 
   setViewingGrupo(id) {
     this.viewingGrupoId = id == null ? null : Number(id);
@@ -63,6 +72,15 @@ export const store = {
       if (this.viewingGrupoId == null) localStorage.removeItem(VIEWING_GRUPO_KEY);
       else localStorage.setItem(VIEWING_GRUPO_KEY, String(this.viewingGrupoId));
     } catch {}
+  },
+
+  // Grupo efectivo para una ESCRITURA (crear/contar/eliminar un insumo,
+  // vincular una categoría): admin/coordinador siempre el suyo propio;
+  // super_admin, el que eligió mirar en la barra superior (null = "Todos" —
+  // no alcanza para escribir, hay que elegir uno puntual primero).
+  writeGrupoId() {
+    const g = auth.isSuperAdmin() ? this.viewingGrupoId : auth.grupo();
+    return g == null ? null : Number(g);
   },
 
   async loadGrupos() {
@@ -83,36 +101,85 @@ export const store = {
     await this.loadGrupos();
   },
 
-  // ── Categorías (dinámicas — creadas/editadas/borradas por el admin) ────
-  // item.categoria guarda el `id` de la categoría (no un string fijo como
-  // antes): helpers.js#catLabel/catColor lo resuelven contra este mapa.
-  // Un super_admin con un grupo elegido solo carga las categorías de ESE
-  // grupo (RLS le dejaría ver todas, esto es filtro de UI); admin/
-  // coordinador siempre ven solo las suyas, ya acotadas por RLS.
+  // ── Categorías — catálogo COMPARTIDO entre grupos (revisión "productos
+  // multigrupo", 2026-08-25): una categoría ya no pertenece a un único
+  // grupo, se vincula vía `category_grupos` (M2M). `item.categoria` sigue
+  // guardando el `id` de la categoría — helpers.js#catLabel/catColor lo
+  // resuelven contra el mapa que puebla setCategories() acá abajo. ────────
+
+  // Categorías vinculadas a UN grupo puntual (usado por loadCategories() y
+  // por el modal "Editar grupo" para listar/gestionar las de cualquier
+  // grupo, no solo el propio).
+  async categoriesForGrupo(grupoId) {
+    if (!navigator.onLine || grupoId == null) return [];
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/category_grupos?select=categories(id,nombre)&grupo_id=eq.${grupoId}`,
+        { headers: _commHeaders() }
+      );
+      if (!res.ok) return [];
+      const rows = await res.json();
+      return rows.map(r => r.categories).filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    } catch { return []; }
+  },
+
+  // Categorías "vigentes" para la sesión actual: super_admin sin grupo
+  // elegido ("Todos") ve el catálogo completo; el resto (admin/coordinador,
+  // o super_admin con un grupo puntual elegido) solo las vinculadas a ESE
+  // grupo.
   async loadCategories() {
     if (!navigator.onLine) return this.categories;
     try {
-      let url = `${SUPABASE_URL}/rest/v1/categories?select=id,nombre,grupo_id&order=nombre.asc`;
-      if (auth.isSuperAdmin() && this.viewingGrupoId != null) url += `&grupo_id=eq.${this.viewingGrupoId}`;
-      const res = await fetch(url, { headers: _commHeaders() });
-      if (!res.ok) return this.categories;
-      this.categories = await res.json();
+      let rows;
+      if (auth.isSuperAdmin() && this.viewingGrupoId == null) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/categories?select=id,nombre&order=nombre.asc`, { headers: _commHeaders() });
+        rows = res.ok ? await res.json() : this.categories;
+      } else {
+        const grupo = auth.isSuperAdmin() ? this.viewingGrupoId : auth.grupo();
+        rows = await this.categoriesForGrupo(grupo);
+      }
+      this.categories = rows;
       setCategories(this.categories);
     } catch { /* sin red: se queda con lo último cargado (o vacío al inicio) */ }
     return this.categories;
   },
 
+  // Catálogo GLOBAL de nombres de categoría (de cualquier grupo) — alimenta
+  // el buscador de "crear categoría" (evita duplicados: reutilizar una ya
+  // existente en vez de crear otra con el mismo nombre).
+  async loadAllCategoryNames() {
+    if (!navigator.onLine) return this._allCategoryNames;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/categories?select=id,nombre&order=nombre.asc`, { headers: _commHeaders() });
+      if (res.ok) this._allCategoryNames = await res.json();
+    } catch {}
+    return this._allCategoryNames;
+  },
+  // Sugerencias de categoría por texto (normSearch, mismo criterio que el
+  // resto de los buscadores de la app) — hasta 8 resultados.
+  searchCategoryNames(query) {
+    const q = normSearch(query);
+    const list = this._allCategoryNames || [];
+    if (!q) return list.slice(0, 8);
+    return list.filter(c => normSearch(c.nombre).includes(q)).slice(0, 8);
+  },
+
+  // Busca-y-reutiliza (o crea) una categoría y la vincula al grupo indicado
+  // (o al efectivo de la sesión). Ver create_category en el esquema.
   async createCategory(nombre, grupoId) {
-    const id = await _rpc('create_category', { p_nombre: nombre, p_grupo_id: grupoId ?? null });
-    await this.loadCategories();
+    const id = await _rpc('create_category', { p_nombre: nombre, p_grupo_id: grupoId ?? this.writeGrupoId() });
+    await Promise.all([this.loadCategories(), this.loadAllCategoryNames()]);
     return id;
   },
   async renameCategory(id, nombre) {
     await _rpc('update_category', { p_id: id, p_nombre: nombre });
-    await this.loadCategories();
+    await Promise.all([this.loadCategories(), this.loadAllCategoryNames()]);
   },
-  async deleteCategory(id) {
-    await _rpc('delete_category', { p_id: id });
+  // Desvincula la categoría del grupo (o la borra del todo si queda sin
+  // ningún grupo vinculado) — force=true elimina también (borrado lógico)
+  // los conteos vivos de ese grupo en esa categoría.
+  async deleteCategory(id, { force = false, grupoId } = {}) {
+    await _rpc('delete_category', { p_id: id, p_force: !!force, p_grupo_id: grupoId ?? this.writeGrupoId() });
     await this.loadCategories();
   },
   // "Usuarios activos" en Resumen — cuenta admin+coordinador no baneados
@@ -123,14 +190,20 @@ export const store = {
     catch { return null; }
   },
   // Admin-only del lado del servidor (ver update_product_category en el
-  // esquema) — reasigna la categoría de un producto ya existente.
+  // esquema) — reasigna la categoría de un producto ya existente. Afecta a
+  // TODOS los grupos que lo cuenten (el producto es catálogo compartido):
+  // se refleja en cada fila local que comparta su productClientId.
   async setProductCategory(itemId, categoryId) {
     const it = this.find(itemId);
     if (!it || it.db_id == null) throw new Error('Insumo sin sincronizar todavía — espera a que suba antes de reasignar su categoría.');
     await _rpc('update_product_category', { p_product_id: it.db_id, p_category_id: categoryId });
-    it.categoria = categoryId;
-    it.updated_at = nowISO();
-    await db.put(it);
+    for (const i of this.items) {
+      if (i.productClientId === it.productClientId) {
+        i.categoria = categoryId;
+        i.updated_at = nowISO();
+        await db.put(i);
+      }
+    }
     return it;
   },
 
@@ -138,6 +211,7 @@ export const store = {
   async init() {
     this.contadorNombre = localStorage.getItem('ucv-inv-contador') || '';
     if (sync.enabled) await this.loadCategories();
+    if (sync.enabled) await this.loadAllCategoryNames();
     if (sync.enabled && auth.isSuperAdmin()) await this.loadGrupos();
 
     // Un insumo fusionado en la nube no debe volver a sembrarse desde seed.js.
@@ -153,16 +227,13 @@ export const store = {
       // al futuro y NO traería los insumos ya contados: el catálogo se
       // quedaría en cero para siempre. Hay que olvidar el checkpoint.
       desdeCero = true;
-      const seeded = semilla.map(c => ({
-        ...c, cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(),
+      const grupoSemilla = this.writeGrupoId();
+      const seeded = grupoSemilla == null ? [] : semilla.map(c => ({
+        ...c, id: _localId(c.id, grupoSemilla), productClientId: c.id, grupoId: grupoSemilla,
+        cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(),
       }));
-      await db.bulkPut(seeded);
+      if (seeded.length) await db.bulkPut(seeded);
       local = seeded;
-    } else {
-      const known = new Set(local.map(i => i.id));
-      const nuevos = semilla.filter(c => !known.has(c.id))
-        .map(c => ({ ...c, cantidad: 0, contado: false, contado_por: null, updated_at: nowISO() }));
-      if (nuevos.length) { await db.bulkPut(nuevos); local = local.concat(nuevos); }
     }
     this.items = local;
     this.logs  = await db.logGetAll();
@@ -182,26 +253,29 @@ export const store = {
 
   find(id) { return this.items.find(i => i.id === id); },
 
+  // Todas las filas (de cualquier grupo visible) de un mismo producto —
+  // usado para el total agregado en Insumos cuando se ven varios grupos a
+  // la vez (ver views/conteo.js).
+  siblings(productClientId) {
+    return this.items.filter(i => i.productClientId === productClientId && !i.deleted_at);
+  },
+
   // Ítems visibles para la sesión activa: un coordinador solo ve el catálogo
-  // de su propia área (una de las 13 categorías de insumos, ver
-  // helpers.js#CATS); admin ve el catálogo completo sin restricción. El
-  // coordinador del área "General" (auth.isGeneral()) también ve el catálogo
-  // completo sin restricción, igual que admin — no tiene ítems propios (no es
-  // una categoría real), solo consulta el inventario de todas las demás áreas
-  // (nunca lo edita, ver auth.js#canEditInventory() y las vistas que lo
-  // consultan). Control de acceso 100% del lado del cliente, mismo criterio
-  // que el resto del sistema (ver 05-autenticacion.md).
+  // de su propia área (una categoría de insumos); admin ve el catálogo
+  // completo de su grupo sin restricción. El coordinador del área "General"
+  // (auth.isGeneral()) también ve el catálogo completo sin restricción,
+  // igual que admin — no tiene ítems propios (no es una categoría real),
+  // solo consulta el inventario de todas las demás áreas (nunca lo edita,
+  // ver auth.js#canEditInventory()). Un super_admin sin grupo elegido ve
+  // TODOS los grupos a la vez (una fila por cada conteo, ver item.grupoId);
+  // si eligió uno puntual en el switcher, se filtra acá del lado del cliente.
   visibleItems() {
     if (auth.isCoordinador() && !auth.isGeneral()) {
       const area = auth.area();   // id de categoría (string) — ver js/auth.js
       return this.items.filter(i => String(i.categoria) === String(area));
     }
-    // admin/coordinador general: sin filtro acá — RLS ya les entrega solo lo
-    // de su propio grupo (ver js/sync.js, que delega el filtrado al pull).
-    // super_admin: RLS le deja ver todo; si eligió un grupo puntual (ver
-    // switcher en topnav), se filtra acá del lado del cliente.
     if (auth.isSuperAdmin() && this.viewingGrupoId != null) {
-      return this.items.filter(i => catGrupo(i.categoria) === this.viewingGrupoId);
+      return this.items.filter(i => i.grupoId === this.viewingGrupoId);
     }
     return this.items;
   },
@@ -220,14 +294,13 @@ export const store = {
     item.updated_at  = nowISO();
     item.dirty       = true;
     await db.put(item);
-    if (item.nuevo) {
-      await sync.enqueue('products', item);
-    }
 
     if (aplicado !== 0 || opts.forceLog) {
       const entry = {
         id: uid(),
         item_id: item.id,
+        product_client_id: item.productClientId,
+        grupo_id: item.grupoId,
         nombre: item.nombre,
         categoria: item.categoria,
         unidad: item.unidad,
@@ -261,62 +334,95 @@ export const store = {
     return item;
   },
 
-  // ── Crear un insumo nuevo (no estaba en el catálogo) ────
-  // `categoria` es el id de una categoría existente (store.categories) —
-  // ya no hay default fijo: sin categorías dinámicas cargadas no hay forma
-  // de adivinar una razonable, el llamador (ingresorapido.js) debe mandarla.
+  // ── Crear un insumo nuevo para MI grupo (no estaba contado todavía) ─────
+  // `categoria` es el id de una categoría existente (store.categories). Si
+  // ya existe un producto con ese nombre (normalizado) EN ESTA CATEGORÍA
+  // usado por otro grupo (sugerencia del buscador de ingresorapido.js), el
+  // servidor lo reutiliza (add_product_to_grupo) en vez de crear uno nuevo
+  // — evita duplicados de catálogo entre grupos.
   async addNuevo({ nombre, categoria, unidad = 'und', umbral = 0, umbralMax = null, cantidad = 0 }) {
     nombre = (nombre || '').trim();
     if (!nombre || categoria == null) return null;
     umbralMax = umbralMax == null ? null : (Math.max(0, Math.round(umbralMax) || 0) || null);
-    let item = this.items.find(i => normSearch(i.nombre) === normSearch(nombre));
+    cantidad = Math.max(0, Math.round(Number(cantidad) || 0));
+    const grupoId = this.writeGrupoId();
+    if (grupoId == null) throw new Error('Elegí un grupo de extensión en la barra superior primero.');
+
+    // Ya contado en ESTE grupo (mismo nombre, todavía visible): actualiza y
+    // suma en vez de duplicar localmente.
+    let item = this.items.find(i => i.grupoId === grupoId && !i.deleted_at && normSearch(i.nombre) === normSearch(nombre));
     if (item) {
       item.categoria = categoria;
       item.unidad = unidad;
       item.umbral = Math.max(0, Math.round(umbral) || 0);
       item.umbral_max = umbralMax;
-      item.cantidad = 0;
-      item.contado = false;
-      item.contado_por = null;
       item.updated_at = nowISO();
-      item.deleted_at = null;
-      item.nuevo = true;
-    } else {
-      item = {
-        id: 'new-' + uid(),
-        nombre, categoria, unidad, umbral: Math.max(0, Math.round(umbral) || 0), umbral_max: umbralMax,
-        cantidad: 0, contado: false, contado_por: null, updated_at: nowISO(), nuevo: true,
-      };
-      this.items.push(item);
+      await db.put(item);
+      if (cantidad > 0) await this.registrar(item.id, cantidad, { origen: 'ingreso' });
+      return item;
     }
+
+    const productClientId = 'new-' + uid();
+    const localId = _localId(productClientId, grupoId);
+    const contadoPor = cantidad > 0 ? (_conTag(this.contadorNombre) || null) : null;
+    item = {
+      id: localId, productClientId, grupoId,
+      nombre, categoria, unidad,
+      umbral: Math.max(0, Math.round(umbral) || 0), umbral_max: umbralMax,
+      cantidad, contado: cantidad > 0, contado_por: contadoPor,
+      updated_at: nowISO(), nuevo: true,
+    };
+    this.items.push(item);
     await db.put(item);
-    await sync.enqueue('products', item);
-    // Único llamador: ingresorapido.js — siempre origen 'ingreso' (Recepción).
-    if (cantidad > 0) await this.registrar(item.id, cantidad, { origen: 'ingreso' });
-    else await this.setTotal(item.id, 0, { origen: 'ingreso' });
+
+    const opId = uid();
+    await sync.enqueue('addproduct', {
+      item_id: localId, product_client_id: productClientId, grupo_id: grupoId,
+      name: nombre, unidad, category_id: categoria,
+      umbral: item.umbral, umbral_max: umbralMax, qnty: cantidad, client_op_id: opId,
+    });
+    if (cantidad > 0) {
+      const entry = {
+        id: opId, item_id: localId, product_client_id: productClientId, grupo_id: grupoId,
+        nombre, categoria, unidad, cantidad, ts: nowISO(),
+        contado_por: contadoPor, origen: 'ingreso', deleted_at: null,
+      };
+      this.logs.push(entry);
+      await db.logPut(entry);
+    }
     return item;
   },
 
-  // ── Eliminar un insumo del catálogo ─────────────────────
+  // ── Quitar un insumo de MI grupo (borrado lógico del CONTEO, no del
+  // producto real — sigue disponible para el resto de los grupos que lo
+  // cuenten) ──
   async deleteInsumo(id) {
     const it = this.find(id);
     if (!it) return false;
     it.deleted_at = nowISO();
     it.updated_at = nowISO();
     await db.put(it);
-    await sync.enqueue('products', it);
+    await sync.enqueue('removeproduct', {
+      item_id: it.id, product_client_id: it.productClientId, grupo_id: it.grupoId,
+    });
     return true;
   },
 
   // ── Renombrar un insumo (sin tocar stock/categoría) ─────
+  // Producto COMPARTIDO: el nombre se actualiza en TODAS las filas locales
+  // que compartan su productClientId (otros grupos que también lo cuenten).
   async renombrarInsumo(id, nuevoNombre) {
     const it = this.find(id);
     nuevoNombre = (nuevoNombre || '').trim();
     if (!it || !nuevoNombre) return null;
-    it.nombre = nuevoNombre;
-    it.updated_at = nowISO();
-    it.dirty = true;
-    await db.put(it);
+    for (const i of this.items) {
+      if (i.productClientId === it.productClientId) {
+        i.nombre = nuevoNombre;
+        i.updated_at = nowISO();
+        i.dirty = true;
+        await db.put(i);
+      }
+    }
     await sync.enqueue('products', it);
     return it;
   },
@@ -325,17 +431,23 @@ export const store = {
   // existente ── Distinto de crear (addNuevo, donde se define de una vez):
   // esto ajusta los umbrales de un insumo que ya está en el catálogo, desde
   // el modal "Editar insumo" de views/conteo.js. umbralMax null = "sin
-  // límite superior" (mismo criterio que umbral=0 = "no necesario").
+  // límite superior" (mismo criterio que umbral=0 = "no necesario"). Mismo
+  // criterio que renombrarInsumo: se refleja en todas las filas del mismo
+  // producto compartido.
   async setUmbral(id, umbral, umbralMax = null) {
     const it = this.find(id);
     if (!it) return null;
     umbral = Math.max(0, Math.round(Number(umbral) || 0));
     umbralMax = umbralMax == null ? null : (Math.max(0, Math.round(Number(umbralMax) || 0)) || null);
-    it.umbral = umbral;
-    it.umbral_max = umbralMax;
-    it.updated_at = nowISO();
-    it.dirty = true;
-    await db.put(it);
+    for (const i of this.items) {
+      if (i.productClientId === it.productClientId) {
+        i.umbral = umbral;
+        i.umbral_max = umbralMax;
+        i.updated_at = nowISO();
+        i.dirty = true;
+        await db.put(i);
+      }
+    }
     await sync.enqueue('products', it);
     return it;
   },
@@ -345,18 +457,20 @@ export const store = {
   // usuario elige un insumo que ya está en el catálogo: el stock de `sourceId`
   // se suma a `targetId` y `sourceId` se elimina (soft delete), para limpiar
   // duplicados/variantes mal escritas sin perder lo ya contado. Además se
-  // encola un 'merge' para el RPC merge_product (new_schema_archive): sin
-  // eso, el HISTORIAL viejo de `sourceId` (Bitácora/Resumen · Ingresos)
-  // se quedaría apuntando a esa fila ya fusionada para siempre, en vez de
-  // aparecer bajo la identidad del insumo destino — ver
-  // supabase/2026-08-03-merge-product-history.sql.
+  // encola un 'merge' para el RPC merge_product: sin eso, el HISTORIAL viejo
+  // de `sourceId` (Bitácora/Resumen · Ingresos) se quedaría apuntando a esa
+  // fila ya fusionada para siempre, en vez de aparecer bajo la identidad del
+  // insumo destino — ver supabase/new-project-schema.sql §merge_product.
   async fusionarInsumo(sourceId, targetId) {
     const source = this.find(sourceId);
     const target = this.find(targetId);
     if (!source || !target || source.id === target.id) return null;
     await this.registrar(target.id, source.cantidad);
     await this.deleteInsumo(source.id);
-    if (sync.enabled) await sync.enqueue('merge', { source_item_id: source.id, target_item_id: target.id });
+    if (sync.enabled) await sync.enqueue('merge', {
+      item_id: source.id,
+      source_item_id: source.productClientId, target_item_id: target.productClientId,
+    });
     return target;
   },
 
@@ -423,7 +537,9 @@ export const store = {
     item.cantidad = 0; item.contado = false; item.contado_por = null;
     item.updated_at = nowISO(); item.dirty = true;
     await db.put(item);
-    if (sync.enabled) await sync.enqueue('uncount', { item_id: item.id });
+    if (sync.enabled) await sync.enqueue('uncount', {
+      item_id: item.id, product_client_id: item.productClientId, grupo_id: item.grupoId,
+    });
     return item;
   },
 
@@ -445,6 +561,20 @@ export const store = {
       (m[i.categoria] ||= { total: 0, contados: 0, unidades: 0 });
       m[i.categoria].total++;
       if (i.contado) { m[i.categoria].contados++; m[i.categoria].unidades += i.cantidad; }
+    }
+    return m;
+  },
+
+  // Total de unidades por grupo — solo tiene sentido cuando la vista actual
+  // mezcla más de un grupo (super_admin sin uno elegido); Resumen lo muestra
+  // junto al desglose por categoría (ver views/resumen.js).
+  statsByGrupo() {
+    const m = {};
+    for (const i of this.visibleItems()) {
+      if (i.deleted_at) continue;
+      (m[i.grupoId] ||= { total: 0, contados: 0, unidades: 0 });
+      m[i.grupoId].total++;
+      if (i.contado) { m[i.grupoId].contados++; m[i.grupoId].unidades += i.cantidad; }
     }
     return m;
   },
@@ -516,7 +646,7 @@ export const store = {
     // admin/coordinador siempre en el suyo, super_admin en el elegido en la
     // barra superior. Al ACTUALIZAR uno existente (p.ej. resolveComm), se
     // conserva el que ya traía la fila (nunca cambia de grupo).
-    const grupoId = data.grupoId ?? (auth.isSuperAdmin() ? this.viewingGrupoId : auth.grupo());
+    const grupoId = data.grupoId ?? this.writeGrupoId();
     if (grupoId == null) throw new Error('Elegí un grupo de extensión en la barra superior primero.');
 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/comms?on_conflict=id`, {

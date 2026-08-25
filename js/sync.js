@@ -35,7 +35,12 @@ import { toast } from './components/toast.js';
 //        el producto vuelve a bajar por el pull) y esos insumos caían en
 //        "Sin categoría" — y, peor, un coordinador de esa área ya no veía
 //        NADA porque store.visibleItems() compara contra la clave nueva.
-const LS_KEY = 'ucv-inv-ls5';
+//   v6 → productos multigrupo (2026-08-25): la clave local de un ítem pasa
+//        de "client_id del producto" a "client_id::grupo_id" (un producto
+//        ahora puede tener un conteo por cada grupo que lo use) — el
+//        checkpoint viejo no tiene ningún sentido contra la forma nueva, ver
+//        CUTOVER_MULTIGRUPO_KEY abajo (que además vacía todo lo demás).
+const LS_KEY = 'ucv-inv-ls6';
 
 // Lápidas: client_id de insumos borrados en la nube (fusión de duplicados).
 // Hay que recordarlos porque store.init() re-siembra desde seed.js cualquier
@@ -56,6 +61,25 @@ async function _drainQueueOnce() {
   if (localStorage.getItem(CUTOVER_KEY)) return;
   try { await db.qClear(); }
   finally { localStorage.setItem(CUTOVER_KEY, '1'); }
+}
+
+// Corte "productos multigrupo" (2026-08-25): la forma del ítem local cambió
+// por completo (id compuesto, productClientId/grupoId nuevos) y las RPCs de
+// conteo ganaron parámetros nuevos — cualquier fila de `conteo` u operación
+// en `queue` de antes de este deploy queda irreconciliable con el esquema
+// nuevo. Se vacían ambas UNA sola vez (nunca solo el checkpoint: sin esto,
+// filas con el `id` viejo conviven para siempre junto a las nuevas y el
+// catálogo se ve duplicado) y se fuerza un pull completo desde cero.
+const CUTOVER_MULTIGRUPO_KEY = 'ucv-inv-cutover-multigrupo';
+async function _drainMultigrupoOnce() {
+  if (localStorage.getItem(CUTOVER_MULTIGRUPO_KEY)) return;
+  try {
+    await db.clear();
+    await db.qClear();
+    localStorage.removeItem(LS_KEY);
+  } finally {
+    localStorage.setItem(CUTOVER_MULTIGRUPO_KEY, '1');
+  }
 }
 
 export function tombstones() {
@@ -103,10 +127,15 @@ function _opItem(op) {
   return op.payload?.item_id || op.payload?.source_item_id || null;
 }
 
+// client_id del PRODUCTO (catálogo compartido) — ya no es item.id (que ahora
+// es la clave local compuesta "client_id::grupo_id", ver store.js#_localId).
+// deleted_at ya NO se manda acá: el borrado de un producto real solo ocurre
+// server-side (merge_product) — "eliminar un insumo" del lado del cliente
+// ahora es un borrado lógico de SU CONTEO (ver 'removeproduct' abajo), nunca
+// del producto.
 function productPayload(item) {
-  return { client_id: item.id, name: item.nombre, category_id: item.categoria,
-    unidad: item.unidad || 'und', umbral: item.umbral || 0, umbral_max: item.umbral_max ?? null,
-    deleted_at: item.deleted_at || null };
+  return { client_id: item.productClientId, name: item.nombre, category_id: item.categoria,
+    unidad: item.unidad || 'und', umbral: item.umbral || 0, umbral_max: item.umbral_max ?? null };
 }
 
 export const sync = {
@@ -154,6 +183,7 @@ export const sync = {
     this._ok();
     try {
       await _drainQueueOnce();
+      await _drainMultigrupoOnce();
       await this._push();
       await this._pull();
       this.online = true;
@@ -183,9 +213,12 @@ export const sync = {
 
     // 2. Procesar tabla 'products' (absolutos, batch upsert)
     if (byTable.products.length > 0) {
-      // Coalescing de absolutos: última versión gana
+      // Coalescing de absolutos por PRODUCTO (client_id) — última versión
+      // gana; un rename/umbral se encola una vez por cada fila local que
+      // comparta ese producto (una por grupo, ver store.js#renombrarInsumo),
+      // así que sin esto se mandarían N upserts idénticos.
       const absMap = new Map();
-      for (const op of byTable.products) absMap.set(op.payload.id, op);
+      for (const op of byTable.products) absMap.set(op.payload.productClientId, op);
       
       const pids = Array.from(absMap.values());
       const batch = pids.map(op => productPayload(op.payload));
@@ -229,8 +262,13 @@ export const sync = {
     //    Sin coalescing: cada conteo usa su propio op.id como client_op_id
     //    (idempotente y estable). Así un 'uncount' encolado DESPUÉS de un
     //    conteo del mismo insumo no lo pisa por reordenamiento, y viceversa.
+    //    'addproduct'/'removeproduct' (alta/baja del conteo de un insumo en
+    //    MI grupo) entran en esta misma cola cronológica — no en el batch de
+    //    'products' de arriba — para que un 'conteo' encolado justo después
+    //    de crear el insumo espere a que exista de verdad del lado del
+    //    servidor (ver store.js#addNuevo).
     const ops = q
-      .filter(op => op.table === 'conteo' || op.table === 'uncount' || op.table === 'delcount' || op.table === 'merge')
+      .filter(op => ['conteo', 'uncount', 'delcount', 'merge', 'addproduct', 'removeproduct'].includes(op.table))
       .sort((a, b) => a.ts - b.ts);
 
     // Insumos con una op atascada: sus ops POSTERIORES esperan (el orden
@@ -256,18 +294,31 @@ export const sync = {
         const p = op.payload;
         const delta = p.deleted_at ? -p.cantidad : p.cantidad;
         endpoint = 'apply_count';
-        body = { p_client_op_id: op.id, p_product_client_id: p.item_id, p_delta: delta, p_origen: p.origen || 'conteo' };
+        body = { p_client_op_id: op.id, p_product_client_id: p.product_client_id, p_delta: delta, p_origen: p.origen || 'conteo', p_grupo_id: p.grupo_id };
       } else if (op.table === 'uncount') {
         endpoint = 'uncount_item';
-        body = { p_product_client_id: op.payload.item_id };
+        body = { p_product_client_id: op.payload.product_client_id, p_grupo_id: op.payload.grupo_id };
       } else if (op.table === 'merge') {
         // Reatribuye el historial del insumo absorbido (Renombrar → fusionar
-        // con uno existente) al destino — ver
-        // supabase/2026-08-03-merge-product-history.sql. Idempotente: un
-        // reintento no rompe nada aunque el origen ya haya quedado fusionado.
+        // con uno existente) al destino — ver supabase/new-project-
+        // schema.sql §merge_product. Idempotente: un reintento no rompe nada
+        // aunque el origen ya haya quedado fusionado.
         endpoint = 'merge_product';
         body = { p_source_client_id: op.payload.source_item_id,
                  p_target_client_id: op.payload.target_item_id };
+      } else if (op.table === 'addproduct') {
+        // Busca-y-reutiliza (o crea) el producto en la categoría y adjunta/
+        // revive el conteo de MI grupo — ver store.js#addNuevo.
+        const p = op.payload;
+        endpoint = 'add_product_to_grupo';
+        body = {
+          p_client_id: p.product_client_id, p_name: p.name, p_unidad: p.unidad,
+          p_category_id: p.category_id, p_umbral: p.umbral, p_umbral_max: p.umbral_max ?? null,
+          p_qnty: p.qnty, p_client_op_id: p.client_op_id, p_grupo_id: p.grupo_id,
+        };
+      } else if (op.table === 'removeproduct') {
+        endpoint = 'remove_product_from_grupo';
+        body = { p_product_client_id: op.payload.product_client_id, p_grupo_id: op.payload.grupo_id };
       } else { // delcount
         endpoint = 'delete_count';
         body = { p_client_op_id: op.payload.client_op_id };
@@ -279,6 +330,19 @@ export const sync = {
         });
         if (res.ok) {
           confirmedIds.push(op.id);
+          // add_product_to_grupo puede reutilizar un producto YA EXISTENTE
+          // (mismo nombre+unidad en la categoría, usado por otro grupo) en
+          // vez del client_id temporal que generó store.js#addNuevo — si
+          // difiere, la fila local temporal se descarta; el próximo _pull()
+          // de este mismo ciclo trae la canónica (su inventory recién creado
+          // queda con updated_at reciente, se detecta como cambio).
+          if (op.table === 'addproduct') {
+            const data = await res.json().catch(() => null);
+            const row = Array.isArray(data) ? data[0] : data;
+            if (row && row.client_id && row.client_id !== op.payload.product_client_id) {
+              await db.del(op.payload.item_id);
+            }
+          }
         } else if (_isPermanent(res.status)) {
           const cuerpo = await res.text();
           console.error(`Error permanente ${op.table} (${res.status}):`, cuerpo);
@@ -316,98 +380,141 @@ export const sync = {
   },
 
   // ── PULL (Descargar Cambios Remotos) ────────────────
+  // Productos multigrupo (2026-08-25): un producto ahora puede tener VARIAS
+  // filas de inventory (una por grupo) — el pull incremental pasa a ser dos
+  // consultas en vez de una:
+  //   (a) products cuyo PROPIO catálogo cambió (rename/umbral/categoría/
+  //       alta) — trae TODAS sus filas de inventory vivas (to-many).
+  //   (b) inventory que cambió SOLO (un conteo, sin tocar el producto) — con
+  //       su producto embebido (to-one).
+  // Ambas escriben en el mismo mapa local por clave compuesta, así que un
+  // cambio que aparezca en las dos (p.ej. un insumo nuevo) no se duplica.
+  async _fetchPage(url) {
+    let all = [], from = 0; const limit = 1000;
+    for (;;) {
+      const res = await fetch(url, { headers: _headers({ Range: `${from}-${from + limit - 1}` }) });
+      if (!res.ok) { this._fallo(res.status, await res.text()); throw new Error(`HTTP ${res.status} pull`); }
+      const data = await res.json();
+      if (!Array.isArray(data)) break;
+      all = all.concat(data);
+      if (data.length < limit) break;
+      from += limit;
+    }
+    return all;
+  },
+
   async _pull() {
     // Checkpoint. Guardamos el updated_at MÁS ALTO que nos devolvió el servidor,
     // nunca Date.now(): updated_at lo escribe Postgres con su propio reloj, y un
     // teléfono desfasado unos segundos se saltaría cambios ajenos para siempre.
     const fetchSince = localStorage.getItem(LS_KEY) || new Date(0).toISOString();
+    const since = encodeURIComponent(fetchSince);
 
-    let remote = [], from = 0, limit = 1000;
-    while (true) {
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?updated_at=gt.${encodeURIComponent(fetchSince)}&select=id,client_id,name,category_id,unidad,umbral,umbral_max,updated_at,deleted_at,inventory(qnty,last_counted_at,last_counted_by)`,
-        { headers: _headers({ Range: `${from}-${from + limit - 1}` }) }
-      );
-      if (!res.ok) { this._fallo(res.status, await res.text()); throw new Error(`HTTP ${res.status} pull`); }
-      const data = await res.json();
-      if (!Array.isArray(data)) break;
-      remote = remote.concat(data);
-      if (data.length < limit) break;
-      from += limit;
-    }
+    const [remoteProducts, remoteInventory] = await Promise.all([
+      this._fetchPage(`${SUPABASE_URL}/rest/v1/products?updated_at=gt.${since}&select=id,client_id,name,category_id,unidad,umbral,umbral_max,updated_at,deleted_at,inventory(product_id,grupo_id,qnty,last_counted_at,last_counted_by,updated_at,deleted_at)`),
+      this._fetchPage(`${SUPABASE_URL}/rest/v1/inventory?updated_at=gt.${since}&select=product_id,grupo_id,qnty,last_counted_at,last_counted_by,updated_at,deleted_at,products(id,client_id,name,category_id,unidad,umbral,umbral_max,updated_at,deleted_at)`),
+    ]);
 
-    if (remote.length === 0) return;
-
-    const localAll = await db.getAll();
-    const byId = new Map(localAll.map(i => [i.id, i]));
-    const itemsToPut = [];
-    let maxUpdated = fetchSince;
+    if (remoteProducts.length === 0 && remoteInventory.length === 0) return;
 
     // Insumos con cambios locales todavía en la cola. El pull NO los pisa: a un
     // voluntario contando sin señal se le borraría de la pantalla lo que acaba
     // de contar, porque la nube aún no lo sabe.
     const pendientes = new Set(
       (await db.qGetAll())
-        .map(op => op.payload?.item_id || op.payload?.id)
+        // item_id/product_client_id cubren conteo/uncount/addproduct/
+        // removeproduct/merge; productClientId cubre 'products' (payload =
+        // el item completo, ver store.js#renombrarInsumo/setUmbral).
+        .flatMap(op => [op.payload?.item_id, op.payload?.product_client_id, op.payload?.productClientId])
         .filter(Boolean)
     );
 
-    for (const p of remote) {
-      if (p.updated_at > maxUpdated) maxUpdated = p.updated_at;
-      let item = store.find(p.client_id);
-      if (p.deleted_at) {
-        if (!item) {
-          item = {
-             id: p.client_id,
-             nombre: p.name,
-             categoria: p.category_id, unidad: p.unidad || 'und', umbral: p.umbral || 0,
-             umbral_max: p.umbral_max ?? null,
-             cantidad: 0, contado: false, contado_por: null, updated_at: p.updated_at
-          };
-          store.items.push(item);
-        }
-        item.deleted_at = p.deleted_at;
-        item.updated_at = p.updated_at;
-        await db.put(item);
-        continue;
+    const localAll = await db.getAll();
+    const byId = new Map(localAll.map(i => [i.id, i]));
+    const byKey = new Map();   // localId -> item a escribir
+    let maxUpdated = fetchSince;
+
+    const bump = (ts) => { if (ts && ts > maxUpdated) maxUpdated = ts; };
+
+    const putRow = (p, inv) => {
+      bump(p.updated_at);
+      bump(inv.updated_at);
+      const localId = `${p.client_id}::${inv.grupo_id}`;
+      const local = byId.get(localId);
+      const pendiente = pendientes.has(localId) || pendientes.has(p.client_id);
+
+      if (inv.deleted_at) {
+        // Conteo soft-borrado en este grupo (remove_product_from_grupo, o
+        // un desvincular-categoría forzado) — se refleja como tal, no se
+        // pisa si hay algo pendiente en la cola para esta fila.
+        if (pendiente) return;
+        byKey.set(localId, {
+          ...(local || {
+            productClientId: p.client_id, grupoId: inv.grupo_id,
+            nombre: p.name, categoria: p.category_id, unidad: p.unidad || 'und',
+            umbral: p.umbral || 0, umbral_max: p.umbral_max ?? null,
+            cantidad: 0, contado: false, contado_por: null,
+          }),
+          id: localId, db_id: p.id,
+          nombre: p.name, categoria: p.category_id,
+          deleted_at: inv.deleted_at, updated_at: p.updated_at,
+        });
+        return;
       }
-      const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory;
-      const qnty = inv?.qnty ?? 0;
-      const lastCounted = inv?.last_counted_at ?? null;
-      const local = byId.get(p.client_id);
-      const pendiente = pendientes.has(p.client_id);
 
-      // Un conteo confirmado en CERO también está contado: es la diferencia
-      // entre "no fui" y "fui, miré y no hay nada". Por eso vale last_counted_at
-      // y no solo la cantidad.
-      const contadoRemoto = qnty > 0 || !!lastCounted;
-
+      const contadoRemoto = inv.qnty > 0 || !!inv.last_counted_at;
       // Sin nada pendiente, MANDA la nube. Antes se conservaba el `contado`
       // local cuando el servidor decía "no contado": al desmarcar un insumo en
       // un teléfono, los demás lo seguían mostrando marcado (en 0, pero
       // contado) y el progreso quedaba inflado. uncount_item pone qnty=0 y
       // last_counted_at=NULL justamente para que la retracción se propague.
-      itemsToPut.push({
+      byKey.set(localId, {
         ...(local || {}),
         db_id: p.id,
-        id: p.client_id,
+        id: localId,
+        productClientId: p.client_id,
+        grupoId: inv.grupo_id,
         nombre: p.name,
         categoria: p.category_id,
         unidad: p.unidad || local?.unidad || 'und',
         umbral: p.umbral ?? (local?.umbral ?? 10),
         umbral_max: p.umbral_max ?? (local?.umbral_max ?? null),
-        cantidad: pendiente ? (local?.cantidad ?? qnty) : qnty,
+        cantidad: pendiente ? (local?.cantidad ?? inv.qnty) : inv.qnty,
         contado:  pendiente ? (local?.contado ?? false) : contadoRemoto,
         contado_por: pendiente
           ? (local?.contado_por ?? null)
-          : (inv?.last_counted_by ?? (contadoRemoto ? (local?.contado_por ?? null) : null)),
-        last_counted_at: lastCounted,
+          : (inv.last_counted_by ?? (contadoRemoto ? (local?.contado_por ?? null) : null)),
+        last_counted_at: inv.last_counted_at,
+        deleted_at: null,
         updated_at: new Date().toISOString(),
       });
+    };
+
+    for (const p of remoteProducts) {
+      bump(p.updated_at);
+      if (p.deleted_at) {
+        // Producto real fusionado (merge_product) — ya no debería tener
+        // filas de inventory vivas; se marca deleted_at en cada variante
+        // local que exista para ese producto (una por grupo), y se apunta
+        // en las lápidas (ver comentario de tombstones() más arriba).
+        addTombstone(p.client_id);
+        for (const local of localAll) {
+          if (local.productClientId === p.client_id) {
+            byKey.set(local.id, { ...local, deleted_at: p.deleted_at, updated_at: p.updated_at });
+          }
+        }
+        continue;
+      }
+      const rows = Array.isArray(p.inventory) ? p.inventory : (p.inventory ? [p.inventory] : []);
+      for (const inv of rows) putRow(p, inv);
     }
 
-    if (itemsToPut.length > 0) {
-      await db.bulkPut(itemsToPut);
+    for (const row of remoteInventory) {
+      if (row.products) putRow(row.products, row);
+    }
+
+    if (byKey.size > 0) {
+      await db.bulkPut([...byKey.values()]);
     }
 
     // Avanzar el checkpoint solo hasta donde el servidor confirmó
@@ -419,22 +526,25 @@ export const sync = {
   // Foto COMPLETA de las cantidades en la nube, sin tocar el checkpoint
   // incremental ni escribir en IndexedDB. La usa la revisión de conteo para
   // comparar "lo que yo tengo" contra "lo que hay allá" antes de subir nada.
-  // Devuelve Map(client_id → { qnty, contado }).
+  // Devuelve Map(client_id → { qnty, contado }) — qnty SUMADA entre todos
+  // los grupos que cuenten ese producto (catálogo compartido).
   async fetchCloudState() {
     const mapa = new Map();
     let from = 0; const limit = 1000;
     for (;;) {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?deleted_at=is.null&select=client_id,inventory(qnty,last_counted_at)&order=id.asc`,
+        `${SUPABASE_URL}/rest/v1/products?deleted_at=is.null&select=client_id,inventory(qnty,last_counted_at,deleted_at)&order=id.asc`,
         { headers: _headers({ Range: `${from}-${from + limit - 1}` }) }
       );
       if (!res.ok) { this._fallo(res.status, await res.text()); throw new Error(`HTTP ${res.status}`); }
       const data = await res.json();
       if (!Array.isArray(data)) break;
       for (const p of data) {
-        const inv = Array.isArray(p.inventory) ? p.inventory[0] : p.inventory;
-        const qnty = inv?.qnty ?? 0;
-        mapa.set(p.client_id, { qnty, contado: qnty > 0 || !!inv?.last_counted_at });
+        const rows = (Array.isArray(p.inventory) ? p.inventory : (p.inventory ? [p.inventory] : []))
+          .filter(i => !i.deleted_at);
+        const qnty = rows.reduce((s, i) => s + (i.qnty || 0), 0);
+        const contado = rows.some(i => i.qnty > 0 || !!i.last_counted_at);
+        mapa.set(p.client_id, { qnty, contado });
       }
       if (data.length < limit) break;
       from += limit;

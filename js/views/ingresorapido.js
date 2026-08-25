@@ -12,6 +12,8 @@ import { store } from '../store.js';
 import { sync } from '../sync.js';
 import { db } from '../db.js';
 import { auth } from '../auth.js';
+import { SUPABASE_URL } from '../config.js';
+import { DB_SCHEMA } from '../env-config.js';
 import { openPanel as openAdminPanel } from './admin.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
@@ -34,7 +36,27 @@ let _footEl = null; // <div id="qa-shell-foot"> — pie compartido (nombre + her
                      // de contenido se ve, no el pie.
 let _onAdded = null;
 let _sel = null;   // insumo seleccionado
-let _new = null;   // { nombre } modo crear
+let _new = null;   // { nombre, categoria?, unidad?, umbral?, umbralMax?, reused? } modo crear
+
+// Catálogo compartido: productos ya usados por OTROS grupos en las mismas
+// categorías que mi grupo (store.categories) — permite sugerirlos como
+// "adoptar" en vez de crear un duplicado. Se recarga al abrir el panel
+// (best-effort, sin bloquear) — una sugerencia levemente desactualizada no
+// importa: al elegirla, add_product_to_grupo resuelve el producto real
+// server-side de todos modos (ver store.js#addNuevo).
+let _catalogCache = [];
+async function _loadCatalogCache() {
+  if (!navigator.onLine) return;
+  const ids = store.categories.map(c => c.id);
+  if (!ids.length) { _catalogCache = []; return; }
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/products?category_id=in.(${ids.join(',')})&deleted_at=is.null&select=client_id,name,unidad,category_id,umbral,umbral_max`,
+      { headers: auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }) }
+    );
+    if (res.ok) _catalogCache = await res.json();
+  } catch { /* sin red: se queda con lo último cargado */ }
+}
 
 export function renderIngresoRapido(shellEl, opts = {}) {
   _shell = shellEl;
@@ -47,6 +69,7 @@ export function renderIngresoRapido(shellEl, opts = {}) {
   }
   _paint();
   _paintFoot();
+  _loadCatalogCache();
 }
 
 // Cierra el panel a estado buscador (usado al cerrar la hoja móvil) y
@@ -151,20 +174,25 @@ function _body() {
         <button class="qa-link" id="qa-back">← volver</button>
       </div>`;
     }
+    // reused: sugerencia elegida de otro grupo (catálogo compartido) — el
+    // nombre/categoría/unidad ya son los del producto real, se bloquean para
+    // no crear sin querer uno distinto; solo falta la cantidad de MI grupo.
+    const locked = !!_new.reused;
     return `
       <div class="qa-new">
-        <input class="qa-new-name" id="qa-new-name" placeholder="Nombre del insumo…" maxlength="80" value="${escHtml(_new.nombre || '')}">
+        ${locked ? `<div class="qa-hint" style="margin-top:0">Insumo ya usado por otro grupo — se suma a tu inventario sin duplicar el catálogo.</div>` : ''}
+        <input class="qa-new-name" id="qa-new-name" placeholder="Nombre del insumo…" maxlength="80" value="${escHtml(_new.nombre || '')}" ${locked ? 'disabled' : ''}>
         <div class="qa-new-row">
-          <select class="qa-new-sel" id="qa-new-cat" ${auth.isCoordinador() ? 'disabled' : ''}>
-            ${opciones.map(c => `<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
+          <select class="qa-new-sel" id="qa-new-cat" ${auth.isCoordinador() || locked ? 'disabled' : ''}>
+            ${opciones.map(c => `<option value="${c.id}" ${locked && String(c.id) === String(_new.categoria) ? 'selected' : ''}>${escHtml(c.nombre)}</option>`).join('')}
           </select>
-          <select class="qa-new-sel" id="qa-new-unit">
-            ${UNIDADES.map(u => `<option value="${u}">${u}</option>`).join('')}
+          <select class="qa-new-sel" id="qa-new-unit" ${locked ? 'disabled' : ''}>
+            ${UNIDADES.map(u => `<option value="${u}" ${locked && u === _new.unidad ? 'selected' : ''}>${u}</option>`).join('')}
           </select>
         </div>
-        <input class="qa-new-name" id="qa-new-umbral" type="number" inputmode="numeric" min="0" placeholder="Umbral de alerta (mín. deseado)" value="10">
+        <input class="qa-new-name" id="qa-new-umbral" type="number" inputmode="numeric" min="0" placeholder="Umbral de alerta (mín. deseado)" value="${_new.umbral ?? 10}" ${locked ? 'disabled' : ''}>
         <input class="qa-qty" id="qa-new-qty" type="number" inputmode="numeric" min="0" placeholder="Cantidad contada">
-        <button class="qa-add-btn" id="qa-new-ok">Crear y sumar</button>
+        <button class="qa-add-btn" id="qa-new-ok">${locked ? 'Sumar a mi grupo' : 'Crear y sumar'}</button>
         <button class="qa-link" id="qa-back">← cancelar</button>
       </div>`;
   }
@@ -228,9 +256,10 @@ function _wire() {
         categoria: _host.querySelector('#qa-new-cat').value,
         unidad: _host.querySelector('#qa-new-unit').value,
         umbral: parseInt(_host.querySelector('#qa-new-umbral').value, 10) || 10,
+        umbralMax: _new.umbralMax ?? null,
         cantidad: parseInt(_host.querySelector('#qa-new-qty').value, 10) || 0,
       });
-      toast.ok(`Creado: ${it.nombre}`);
+      toast.ok(_new.reused ? `Sumado a tu grupo: ${it.nombre}` : `Creado: ${it.nombre}`);
       _onAdded?.(it.id, true);
       _new = null; _paint();
       const s = _host.querySelector('#qa-search');
@@ -262,19 +291,46 @@ function _sugg(q, box) {
   scored.sort((a, b) => a[0] - b[0] || a[1].nombre.localeCompare(b[1].nombre, 'es'));
   const top = scored.slice(0, 8);
 
+  // Catálogo compartido: productos de mis categorías ya usados por OTROS
+  // grupos, que mi grupo todavía no cuenta (si ya lo cuento, ya está arriba)
+  // — sugerirlos evita crear un duplicado con nombre/unidad ligeramente
+  // distinto (ver _loadCatalogCache).
+  const mine = new Set(store.items.map(i => i.productClientId));
+  const otros = _catalogCache
+    .filter(p => !mine.has(p.client_id) && normSearch(p.name).includes(nq))
+    .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    .slice(0, 5);
+
   box.innerHTML = top.map(([, it]) => `
     <button class="qa-sugg-item" data-id="${escHtml(it.id)}">
       <span class="qa-sugg-dot" style="background:${catColor(it.categoria)}"></span>
       <span class="qa-sugg-name">${escHtml(it.nombre)}</span>
       ${it.contado ? `<span class="qa-sugg-have">${it.cantidad}</span>` : ''}
-    </button>`).join('') + `
+    </button>`).join('') + (otros.length ? `
+    <div class="qa-hint" style="margin:6px 0 2px">Usados por otros grupos:</div>` + otros.map(p => `
+    <button class="qa-sugg-item" data-otro="${escHtml(p.client_id)}">
+      <span class="qa-sugg-dot" style="background:${catColor(p.category_id)}"></span>
+      <span class="qa-sugg-name">${escHtml(p.name)}</span>
+      <span class="qa-sugg-have" title="Todavía no está en tu grupo">+ tu grupo</span>
+    </button>`).join('') : '') + `
     <button class="qa-sugg-new" data-new="1">
       <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       Crear “${escHtml(q)}”
     </button>`;
 
-  box.querySelectorAll('.qa-sugg-item').forEach(b => {
+  box.querySelectorAll('.qa-sugg-item[data-id]').forEach(b => {
     b.onclick = () => { _sel = store.find(b.dataset.id); _paint(); };
+  });
+  box.querySelectorAll('.qa-sugg-item[data-otro]').forEach(b => {
+    b.onclick = () => {
+      const p = _catalogCache.find(x => x.client_id === b.dataset.otro);
+      if (!p) return;
+      _new = {
+        nombre: p.name, categoria: p.category_id, unidad: p.unidad,
+        umbral: p.umbral, umbralMax: p.umbral_max, reused: true,
+      };
+      _paint();
+    };
   });
   box.querySelector('.qa-sugg-new').onclick = () => { _new = { nombre: q }; _paint(); };
 }

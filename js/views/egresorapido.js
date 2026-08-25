@@ -271,9 +271,9 @@ function _searchProducto(q, box, idx) {
 // vuelve a aparecer en el pull hasta que algo más lo toque. Se marca
 // contado=true (igual que hace registrar()): un egreso es un cambio de
 // cantidad tan real y confirmado como un conteo manual.
-async function _applyLocalStockPatch(items) {
+async function _applyLocalStockPatch(items, grupoId) {
   for (const { product_id, qnty } of items) {
-    const it = store.items.find(i => i.db_id === product_id);
+    const it = store.items.find(i => i.db_id === product_id && i.grupoId === grupoId);
     if (!it) continue;
     it.cantidad = Math.max(0, it.cantidad - qnty);
     it.contado = true;
@@ -294,6 +294,9 @@ async function _submit() {
     .map(r => ({ product_id: r.item.db_id, qnty: r.cantidad }));
   if (items.length === 0) { toast.err('Agrega al menos un producto con cantidad.'); return; }
 
+  const grupoId = store.writeGrupoId();
+  if (grupoId == null) { toast.err('Elegí un grupo de extensión en la barra superior primero.'); return; }
+
   _submitting = true;
   _paint();
 
@@ -301,12 +304,15 @@ async function _submit() {
 
   // Sin solicitante_ci: el destino ahora es texto libre, va a comandas.notas
   // (ver supabase/2026-08-11-egreso-destino-libre.sql) — la columna es
-  // nullable y la RPC ya no exige que exista.
+  // nullable y la RPC ya no exige que exista. p_grupo_id: admin/coordinador
+  // lo resuelven solos server-side (current_grupo_id()); super_admin debe
+  // mandar el que eligió en la barra superior (ver create_comanda_rapida).
   const payload = {
     p_solicitante_ci: null,
     p_items: items,
     p_client_op_id: _pendingOpId,
     p_note: destino,
+    p_grupo_id: grupoId,
   };
 
   try {
@@ -324,7 +330,7 @@ async function _submit() {
     }
     toast.ok('Comanda registrada y completada.');
     _pendingOpId = null;
-    await _applyLocalStockPatch(items);   // ver comentario de la función: por qué no basta con sync.run()
+    await _applyLocalStockPatch(items, grupoId);   // ver comentario de la función: por qué no basta con sync.run()
     _onSubmitted?.();
     closeEgreso();
     sync.run();   // en segundo plano: confirma/reconcilia con el servidor, no bloquea la UI

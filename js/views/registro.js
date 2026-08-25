@@ -5,7 +5,7 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, catColor, catGrupo, localDate } from '../helpers.js';
+import { escHtml, catColor, localDate } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
@@ -75,7 +75,7 @@ export async function renderRegistro(rootEl) {
   if (SUPABASE_URL) {
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/movement_items?select=id,qnty,movements(id,direction,note,occurred_at,client_op_id),products(name,category_id,client_id)&order=id.desc&limit=500`,
+        `${SUPABASE_URL}/rest/v1/movement_items?select=id,qnty,movements(id,direction,note,occurred_at,client_op_id,grupo_id),products(name,category_id,client_id)&order=id.desc&limit=500`,
         { headers: _headers() }
       );
       if (res.ok) {
@@ -92,6 +92,7 @@ export async function renderRegistro(rootEl) {
               item_id: pr.client_id || '',
               nombre: pr.name || '(sin nombre)',
               categoria: pr.category_id,
+              grupoId: mv.grupo_id ?? null,
               unidad: 'und',
               cantidad: delta,
               ts: mv.occurred_at || new Date().toISOString(),
@@ -129,7 +130,7 @@ export async function renderRegistro(rootEl) {
     const area = auth.area();
     logs = logs.filter(l => String(l.categoria) === String(area));
   } else if (auth.isSuperAdmin() && store.viewingGrupoId != null) {
-    logs = logs.filter(l => catGrupo(l.categoria) === store.viewingGrupoId);
+    logs = logs.filter(l => l.grupoId === store.viewingGrupoId);
   }
 
   _allLogs = logs.sort((a, b) => (a.ts < b.ts ? 1 : -1));

@@ -28,6 +28,13 @@ import { escHtml, normSearch, catLabel, iStatus, iPct } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { confirmDialog } from '../components/confirm.js';
 
+// Etiqueta de grupo — solo tiene sentido para super_admin viendo más de un
+// grupo a la vez (admin/coordinador ya viven acotados a uno solo, ver
+// store.js#visibleItems); "?" si el grupo todavía no bajó en store.grupos.
+function _grupoLabel(id) {
+  return store.grupos.find(g => String(g.id) === String(id))?.nombre || '?';
+}
+
 let _query = '';
 let _cat   = 'todos';
 let _root  = null;
@@ -162,16 +169,24 @@ function cardHtml(it) {
   const umbralTxt = umbralPartes.length ? umbralPartes.join(' · ') : 'no necesario';
   const id = escHtml(it.id);
 
+  // Catálogo compartido entre grupos: si el visor puede ver más de un grupo
+  // a la vez (super_admin sin uno elegido) se agrega la etiqueta de grupo y,
+  // cuando el mismo producto tiene conteo en más de uno, el total sumado.
+  const showGrupo = auth.isSuperAdmin() && store.viewingGrupoId == null;
+  const sibs = showGrupo ? store.siblings(it.productClientId) : [it];
+  const total = sibs.reduce((s, x) => s + (x.cantidad || 0), 0);
+
   return `
     <div class="inv-card status-${s}" data-id="${id}">
       <div class="ic-header">
         <div>
           <div class="ic-name">${escHtml(it.nombre)}</div>
-          <div class="ic-cat">${escHtml(catLabel(it.categoria))}</div>
+          <div class="ic-cat">${escHtml(catLabel(it.categoria))}${showGrupo ? ` · <span class="tag tag-gray" style="padding:1px 6px">${escHtml(_grupoLabel(it.grupoId))}</span>` : ''}</div>
         </div>
         <span class="tag ${tc}">${tt}</span>
       </div>
       <div class="ic-qty">${it.cantidad}</div>
+      ${showGrupo && sibs.length > 1 ? `<div class="ic-unit" style="opacity:.8">Total entre ${sibs.length} grupos: <strong>${total}</strong></div>` : ''}
       <div class="ic-unit">${escHtml(it.unidad)} · ${umbralTxt}</div>
       <div class="ic-prog-row">
         <div class="prog"><div class="prog-fill ${fc}" style="width:${iPct(it)}%"></div></div>
@@ -374,7 +389,8 @@ function _openEditItem(id) {
     const nq = normSearch(q);
     const scored = [];
     for (const other of store.visibleItems()) {
-      if (other.id === it.id || other.deleted_at) continue;
+      if (other.deleted_at) continue;
+      if (other.id === it.id || other.productClientId === it.productClientId) continue;
       const n = normSearch(other.nombre);
       if (!n.includes(nq)) continue;
       scored.push([n.startsWith(nq) ? 0 : 1, other]);
@@ -406,16 +422,19 @@ function _openEditItem(id) {
   });
 
   delBtn.addEventListener('click', async () => {
+    // Borrado lógico: solo quita el CONTEO de tu grupo (el producto sigue
+    // disponible para cualquier otro grupo que lo cuente) — "restaurar" es
+    // simplemente volver a agregarlo desde Ingreso Rápido.
     const ok = await confirmDialog({
-      title: 'Eliminar insumo',
-      body: `¿Seguro que deseas eliminar "${escHtml(it.nombre)}" del catálogo por completo? No se puede deshacer.`,
-      confirmText: 'Eliminar', danger: true,
+      title: 'Quitar insumo de tu grupo',
+      body: `¿Quitar "${escHtml(it.nombre)}" del inventario de tu grupo? El producto no se borra — si vuelves a agregarlo más adelante, se restaura.`,
+      confirmText: 'Quitar', danger: true,
     });
     if (!ok) return;
     await store.deleteInsumo(it.id);
     _closeRen();
     renderList();
-    toast.ok('Insumo eliminado.');
+    toast.ok('Insumo quitado de tu grupo.');
   });
 
   saveBtn.addEventListener('click', async () => {
@@ -473,11 +492,19 @@ function _openEditItem(id) {
 }
 
 // ── "+ categoría" (admin/super_admin) — atajo rápido sin salir de Insumos.
-// La gestión completa (renombrar/borrar) vive en el panel de administrador
-// (ver views/admin.js#_wireCategorias); acá solo se resuelve el caso más
+// La gestión completa (renombrar/desvincular) vive en "Editar grupo" (ver
+// views/admin.js#openEditGrupoModal); acá solo se resuelve el caso más
 // común: falta una categoría para poder clasificar el próximo insumo. Un
 // super_admin necesita haber elegido un grupo en la barra superior primero
-// (una categoría siempre pertenece a un solo grupo).
+// (una categoría se vincula a UN grupo por vez).
+//
+// Catálogo COMPARTIDO entre grupos (revisión "productos multigrupo",
+// 2026-08-25): el campo de nombre funciona como buscador — si ya existe una
+// categoría con ese nombre (de cualquier grupo) se sugiere para reutilizarla
+// (evita duplicados/nombres inconsistentes entre grupos); si no se elige
+// ninguna sugerencia, se crea una nueva. store.createCategory ya resuelve
+// esto server-side (busca-y-reutiliza case-insensitive), el buscador acá
+// solo ayuda a encontrar la sugerencia exacta.
 function _openNewCategoria() {
   if (!auth.hasAdminRights()) return;
   if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
@@ -488,20 +515,40 @@ function _openNewCategoria() {
   const ov = _renModal(`
     <div class="adm-box">
       <div class="adm-head">
-        <div class="adm-title">Nueva categoría</div>
+        <div class="adm-title">Categoría nueva o existente</div>
         <button class="adm-x" data-close>&times;</button>
       </div>
       <div class="adm-field">
         <label>Nombre</label>
         <input id="newcat-input" type="text" autocomplete="off" placeholder="Ej. Alimentos" maxlength="100">
       </div>
+      <div class="adm-note" style="margin:0 0 8px;">Si ya existe una categoría con este nombre (de cualquier grupo), elígela de la lista para reutilizarla en vez de duplicarla.</div>
+      <div class="ren-sugg" id="newcat-sugg"></div>
       <div class="adm-err" id="newcat-err"></div>
-      <button class="adm-btn adm-btn-primary" id="newcat-save">Crear categoría</button>
+      <button class="adm-btn adm-btn-primary" id="newcat-save">Vincular / crear categoría</button>
     </div>`);
 
   const inp = ov.querySelector('#newcat-input');
+  const sugg = ov.querySelector('#newcat-sugg');
   const err = ov.querySelector('#newcat-err');
   const saveBtn = ov.querySelector('#newcat-save');
+
+  function _paintSugg(q) {
+    const matches = store.searchCategoryNames(q);
+    sugg.innerHTML = matches.map(c => `
+      <button type="button" class="ren-sugg-item" data-id="${escHtml(c.id)}" data-nombre="${escHtml(c.nombre)}">
+        <span class="ren-sugg-name">${escHtml(c.nombre)}</span>
+      </button>`).join('');
+    sugg.querySelectorAll('.ren-sugg-item').forEach(b => {
+      b.onclick = () => { inp.value = b.dataset.nombre; sugg.innerHTML = ''; };
+    });
+  }
+
+  let t;
+  inp.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => _paintSugg(inp.value.trim()), 110);
+  });
 
   const _submit = async () => {
     err.textContent = '';
@@ -510,11 +557,11 @@ function _openNewCategoria() {
     try {
       await store.createCategory(val, auth.isSuperAdmin() ? store.viewingGrupoId : undefined);
       _closeRen();
-      toast.ok(`Categoría "${val}" creada.`);
+      toast.ok(`Categoría "${val}" vinculada.`);
       _paintTabs();
       renderList();
     } catch (ex) {
-      err.textContent = ex.message || 'No se pudo crear la categoría.';
+      err.textContent = ex.message || 'No se pudo crear/vincular la categoría.';
     }
   };
 

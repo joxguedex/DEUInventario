@@ -14,7 +14,7 @@
 
 import { store } from '../store.js';
 import { auth } from '../auth.js';
-import { escHtml, catColor, catLabel, catGrupo } from '../helpers.js';
+import { escHtml, catColor, catLabel } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
@@ -68,7 +68,7 @@ async function _fetchAll() {
     const notePattern = encodeURIComponent('*- Egreso');
     for (;;) {
       const url = `${SUPABASE_URL}/rest/v1/movement_items`
-        + `?select=id,qnty,movements!inner(id,occurred_at,note,direction,comandas(notas)),products(name,category_id,client_id)`
+        + `?select=id,qnty,movements!inner(id,occurred_at,note,direction,grupo_id,comandas(notas)),products(name,category_id,client_id)`
         + `&movements.direction=eq.out&movements.note=like.${notePattern}`
         + `&order=id.desc&limit=${limit}`;
       const res = await fetch(url, { headers: _headers({ Range: `${from}-${from + limit - 1}` }) });
@@ -89,6 +89,7 @@ async function _fetchAll() {
         item_id: pr.client_id || '',
         nombre: pr.name || '(sin nombre)',
         categoria: pr.category_id,
+        grupoId: mv.grupo_id ?? null,
         cantidad: m.qnty || 0,
         ts: mv.occurred_at,
         date: _localDate(mv.occurred_at),
@@ -100,7 +101,7 @@ async function _fetchAll() {
       const area = auth.area();
       logs = logs.filter(l => String(l.categoria) === String(area));
     } else if (auth.isSuperAdmin() && store.viewingGrupoId != null) {
-      logs = logs.filter(l => catGrupo(l.categoria) === store.viewingGrupoId);
+      logs = logs.filter(l => l.grupoId === store.viewingGrupoId);
     }
 
     _cache = logs;

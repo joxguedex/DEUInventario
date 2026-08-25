@@ -23,7 +23,15 @@ Catálogo completo, filtrable por búsqueda y por categoría.
   con nombre (+ búsqueda de fusión con un insumo ya existente, si el nombre
   coincide con otro), categoría (admin-only), cantidad, umbral y eliminar.
   Sin `auth.canEditInventory()`, la tarjeta es de solo lectura (sin
-  controles ni lápiz).
+  controles ni lápiz). Catálogo COMPARTIDO entre grupos (revisión
+  "productos multigrupo", 2026-08-25): una fila es un CONTEO
+  `(producto, grupo)`, no un producto — cuando el visor ve más de un grupo
+  a la vez (super_admin sin uno elegido en la barra superior) cada tarjeta
+  agrega la etiqueta del grupo dueño de ese conteo y, si el mismo producto
+  tiene fila en más de un grupo visible, un renglón con el total sumado
+  entre todos (`store.siblings`). "Eliminar" ya no borra el producto: solo
+  quita (borrado lógico) el conteo de TU grupo — el producto y el conteo de
+  otros grupos quedan intactos, y volver a agregarlo lo revive.
 
 ## `views/ingresorapido.js` — Ingreso Rápido
 
@@ -31,13 +39,22 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
 "Agregado Rápido": ya no permite restar (para eso está Egreso Rápido).
 
 - Buscador (debounce 110ms) → sugerencias (top 8, coincidencia de prefijo
-  primero) con un botón "Crear '<texto>'" al final.
-- **Insumo existente**: total actual + input de cantidad + "Sumar" →
-  `store.registrar(id, n, {origen:'ingreso'})`.
-- **Insumo nuevo**: nombre, categoría (`<select>` filtrado a la propia área
-  para un coordinador), unidad, umbral (default 10), cantidad inicial →
-  `store.addNuevo(...)`. Si no hay categorías creadas todavía, bloquea la
-  creación con un aviso en vez de mostrar un `<select>` vacío.
+  primero, de MI grupo) + hasta 5 sugerencias "usados por otros grupos"
+  (catálogo compartido — `_loadCatalogCache()`, productos de mis
+  categorías que otro grupo ya cuenta y el mío todavía no) + un botón
+  "Crear '<texto>'" al final.
+- **Insumo existente (mi grupo)**: total actual + input de cantidad +
+  "Sumar" → `store.registrar(id, n, {origen:'ingreso'})`.
+- **Sugerencia de otro grupo**: abre el mismo formulario de "insumo nuevo"
+  pero con nombre/categoría/unidad/umbral bloqueados (ya son los del
+  producto real) — solo falta la cantidad; al confirmar, `store.addNuevo`
+  llama a `add_product_to_grupo`, que reutiliza el producto compartido en
+  vez de crear uno nuevo.
+- **Insumo nuevo (desde cero)**: nombre, categoría (`<select>` filtrado a
+  la propia área para un coordinador), unidad, umbral (default 10),
+  cantidad inicial → `store.addNuevo(...)`. Si no hay categorías creadas
+  todavía, bloquea la creación con un aviso en vez de mostrar un `<select>`
+  vacío.
 - **`openSheet()`/`closeSheet()`** — hoja inferior en móvil (clase `.open`
   + backdrop + `body.qa-lock`).
 - **Herramientas admin** (`.qa-admin-tools`, solo `auth.isAdmin()`, en el
@@ -155,6 +172,10 @@ Pestaña por defecto al iniciar sesión.
   usuarios activos.
 - **Desglose por categoría**: barra proporcional por categoría
   (`store.statsByCat()`), con enlace "Ver todo →" a Insumos.
+- **Unidades por grupo de extensión** (revisión "productos multigrupo",
+  2026-08-25): mismo formato de barra proporcional, `store.statsByGrupo()`
+  — solo aparece cuando la vista mezcla más de un grupo (super_admin sin
+  uno elegido en la barra superior).
 - **Comunicados recientes**: top-3 `store.activeCommunications`, solo
   lectura (resolver vive en la propia pestaña Comunicados), enlace "Ver
   todos →".
@@ -239,10 +260,13 @@ para que dar de alta una organización entera no quedara escondido.
 
 - **Tarjetas** (`.grp-list`/`.grp-card`, `store.grupos`): avatar de color
   (inicial del nombre), nombre, badge "En gestión ahora" si coincide con
-  `store.viewingGrupoId`, y dos acciones — **"Gestionar"** (`onManage`,
-  cableado en `app.js#nav()`: fija ese grupo en el selector de la barra
-  superior vía `store.setViewingGrupo` y salta a la pestaña Usuarios) y
-  **"Renombrar"** (`promptDialog` + `store.renameGrupo`).
+  `store.viewingGrupoId`, y una acción — **"Editar"** (revisión "productos
+  multigrupo", 2026-08-25 — reemplaza al viejo "Gestionar" + "Renombrar"):
+  abre `openEditGrupoModal` (`views/admin.js`, compartido con la entrada
+  "Editar mi grupo" del panel de cuenta de un admin normal) — nombre +
+  categorías vinculadas (vincular una existente con buscador/crear una
+  nueva, desvincular con opción de forzar el borrado lógico de los conteos
+  vivos de esa categoría en el grupo).
 - **Crear grupo** (`#grp-form`): un solo campo de nombre → `store.createGrupo`.
 - **Stats**: grupos totales, y cuál está "en gestión ahora" (el elegido en
   el selector, o "Todos" si no hay ninguno fijado).
@@ -272,13 +296,26 @@ si algún día hace falta un flujo de despacho por área.
   2. **"Cambiar contraseña"** — autoservicio, `auth.updatePassword()`
      (Supabase Auth: la sesión ya es prueba de identidad, no pide la
      contraseña actual).
-  3. **Admin-only — "Categorías de insumos"**: CRUD completo (listar,
-     crear, renombrar vía `promptDialog`, borrar vía `confirmDialog`
-     danger) sobre `store.categories`.
+  3. **Admin-only — "Mi grupo de extensión"**: botón "Editar mi grupo" →
+     `openEditGrupoModal` (mismo modal compartido con `views/grupos.js`,
+     preescopado a `auth.grupo()`) — reemplaza a la vieja sección
+     "Categorías de insumos" (revisión "productos multigrupo",
+     2026-08-25): la gestión de categorías (crear/vincular/desvincular)
+     vive ahora ahí, no suelta en este panel.
   4. **Admin-only — "Respaldos del conteo"**: lista de checkpoints
      (`checkpoints.js`) con crear/restaurar/borrar, confirmación danger
      para restaurar.
   5. Cerrar sesión.
+
+### `openEditGrupoModal(grupo, { onChange })` — exportado, compartido
+
+Nombre del grupo (`update_grupo` — super_admin cualquiera, admin normal
+solo el suyo) + lista de categorías vinculadas (`store.categoriesForGrupo`)
+con "Renombrar" (global, afecta a todos los grupos que la usan) y
+"Desvincular" (`delete_category` — si el servidor rechaza por conteos
+vivos, ofrece un segundo `confirmDialog` para reintentar con `force: true`)
++ un buscador para vincular una categoría existente o crear una nueva
+(`store.searchCategoryNames` + `store.createCategory`).
 
 ## `components/toast.js`, `components/modal.js`, `components/confirm.js`
 
