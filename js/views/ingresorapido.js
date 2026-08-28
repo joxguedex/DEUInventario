@@ -360,7 +360,7 @@ function _sugg(q, box) {
     <button class="qa-sugg-item" data-otro="${escHtml(p.client_id)}">
       <span class="qa-sugg-dot" style="background:${catColor(p.category_id)}"></span>
       <span class="qa-sugg-name">${escHtml(p.name)}</span>
-      <span class="qa-sugg-have" title="Todavía no está en tu grupo">+ tu grupo</span>
+      <span class="qa-sugg-have" title="Todavía no está en tu grupo">Agregar</span>
     </button>`).join('') : '') + `
     <button class="qa-sugg-new" data-new="1">
       <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
