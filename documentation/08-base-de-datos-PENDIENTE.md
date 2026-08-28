@@ -141,7 +141,9 @@ suyo (`app_metadata.grupo_id`).
   category_id is not null and deleted_at is null`), no por grupo: dos
   grupos que necesiten "Arroz / kg" en "Alimentos" comparten la misma fila.
 - **`inventory`**: `(product_id, grupo_id)` (PK compuesta), `qnty`,
-  `last_counted_at`, `last_counted_by`, `deleted_at` — el CONTEO de un
+  `last_counted_at`, `last_counted_by`, `deleted_at`, `updated_at`
+  (mantenida por trigger genérico, la usa el pull incremental — ver
+  `supabase/2026-08-28-fix-inventory-updated-at.sql`) — el CONTEO de un
   producto **dentro de un grupo**; ya no hay una fila automática por
   producto nuevo, se crea explícitamente vía `add_product_to_grupo` cuando
   ese grupo empieza a contarlo. `deleted_at`: borrado lógico de "este grupo

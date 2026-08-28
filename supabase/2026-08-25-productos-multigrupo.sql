@@ -31,7 +31,10 @@
 --       unidad) entre distintos grupos — mismo patrón que merge_product
 --       (mueve historial, suma conteos por grupo, soft-delete del perdedor).
 --    6. Cambios de esquema: drop categories.grupo_id/products.grupo_id +
---       triggers viejos, PK compuesta de inventory, índices únicos nuevos.
+--       triggers viejos, PK compuesta de inventory, índices únicos nuevos,
+--       inventory.updated_at (fix 2026-08-28, ver
+--       2026-08-28-fix-inventory-updated-at.sql para aplicarlo suelto sobre
+--       una base donde esta migración ya corrió).
 --    7. Redefine can_access_category() y las RPCs/RLS de productos/
 --       categorías/inventario/movimientos/comandas.
 -- ══════════════════════════════════════════════════════════════════════════
@@ -206,6 +209,32 @@ end $$;
 --     reglas nuevas.
 -- ══════════════════════════════════════════════════════════════════════════
 
+-- 6.0 — objetos que dependen de categories.grupo_id y hay que quitar de en
+-- medio ANTES del drop column: las policies viejas (referencian la columna
+-- directamente) y can_access_category (function `language sql`, Postgres
+-- registra su dependencia sobre la columna igual que en una vista). Se
+-- redefine ya con su versión nueva (idéntica a la de la sección 8 más abajo
+-- — queda duplicada ahí a propósito, sin costo, por si se corre esta
+-- sección sola en un reintento).
+drop policy if exists categories_select on sibex.categories;
+drop policy if exists categories_admin_write on sibex.categories;
+
+create or replace function sibex.can_access_category(p_category_id bigint) returns boolean
+language sql stable as $$
+  select sibex.is_super_admin()
+      or (
+        exists (
+          select 1 from sibex.category_grupos cg
+          where cg.category_id = p_category_id and cg.grupo_id = sibex.current_grupo_id()
+        )
+        and (
+          sibex.current_role() = 'admin'
+          or sibex.current_area() = 'general'
+          or p_category_id = sibex.current_category_id()
+        )
+      )
+$$;
+
 -- 6.1 — categories: drop grupo_id, nombre único global.
 do $$
 declare fk text;
@@ -253,6 +282,17 @@ alter table sibex.inventory drop constraint inventory_pkey;
 alter table sibex.inventory alter column grupo_id set not null;
 alter table sibex.inventory add primary key (product_id, grupo_id);
 create index inventory_grupo_id_idx on sibex.inventory (grupo_id);
+
+-- 6.4 — inventory.updated_at: el pull incremental del cliente pasa a ser
+-- dos consultas (ver sección 16 más abajo, sync.js#_pull) — la segunda
+-- necesita esta columna para detectar conteos que cambiaron SIN tocar el
+-- producto. Mismo patrón genérico que ya usan products y el resto de
+-- tablas con esta columna (sibex.set_updated_at(), ver sibex-schema-
+-- install.sql sección 7.1).
+alter table sibex.inventory add column if not exists updated_at timestamptz not null default now();
+drop trigger if exists trg_inventory_updated_at on sibex.inventory;
+create trigger trg_inventory_updated_at before update on sibex.inventory
+  for each row execute function sibex.set_updated_at();
 
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -987,8 +1027,8 @@ create policy category_grupos_select on sibex.category_grupos for select
 grant select on sibex.category_grupos to authenticated;
 grant select, insert, update, delete on sibex.category_grupos to service_role;
 
-drop policy categories_select on sibex.categories;
-drop policy categories_admin_write on sibex.categories;
+-- Ya se dropearon en la sección 6.0 (tenían que irse antes del drop column
+-- de categories.grupo_id) — acá solo quedan por crear las nuevas.
 create policy categories_select on sibex.categories for select
   to authenticated using (true);
 create policy categories_admin_insert on sibex.categories for insert

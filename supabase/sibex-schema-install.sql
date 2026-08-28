@@ -183,6 +183,10 @@ create table sibex.inventory (
   last_counted_at  timestamptz,
   last_counted_by  text,
   deleted_at       timestamptz,
+  -- El pull incremental del cliente filtra por esta columna para detectar
+  -- conteos que cambiaron SIN tocar el producto (ver sync.js#_pull) —
+  -- mantenida por el trigger genérico set_updated_at() de la sección 7.1.
+  updated_at       timestamptz not null default now(),
   primary key (product_id, grupo_id)
 );
 create index inventory_grupo_id_idx on sibex.inventory (grupo_id);
