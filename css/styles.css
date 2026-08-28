@@ -780,6 +780,10 @@ textarea.form-i{resize:vertical;min-height:90px;line-height:1.55}
 .idc-item-qty{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--green);flex-shrink:0}
 .idc-foot{font-size:11px;color:var(--amber-d);font-weight:600;text-align:right}
 
+/* Etiqueta de grupo de extensión — super_admin viendo "Todos los grupos" en
+   Historial/Ingresos/Egresos (ver views/ingresos.js#_showGrupo). */
+.grupo-tag{font-size:9px;font-weight:600;padding:1px 8px;border-radius:20px;background:var(--surface);border:1px solid var(--bdr);color:var(--t3);white-space:nowrap;flex-shrink:0}
+
 .ing-day-badge{display:inline-block;padding:1px 7px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
 .ing-day-badge-today{background:var(--amber-bg);color:var(--amber-d);border:1px solid color-mix(in srgb, var(--amber) 35%, transparent)}
 .ing-day-badge-ayer{background:var(--blu-bg);color:var(--blue);border:1px solid rgba(99,102,241,.3)}

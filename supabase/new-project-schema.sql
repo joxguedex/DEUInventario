@@ -1218,15 +1218,20 @@ begin
     raise exception 'La unidad es obligatoria';
   end if;
 
-  select id, client_id into v_pid, v_client_id
-    from public.products
-   where category_id = p_category_id and unidad = v_unidad
-     and lower(btrim(name)) = lower(v_name) and deleted_at is null;
+  -- Alias/calificados a propósito: products/inventory tienen columnas
+  -- (client_id/name/qnty/product_id) que coinciden con las salidas OUT de
+  -- esta función (returns table(...)) — PL/pgSQL las toma por esas
+  -- variables si quedan sin calificar y tira "column reference ... is
+  -- ambiguous" (42702).
+  select pr.id, pr.client_id into v_pid, v_client_id
+    from public.products pr
+   where pr.category_id = p_category_id and pr.unidad = v_unidad
+     and lower(btrim(pr.name)) = lower(v_name) and pr.deleted_at is null;
 
   if v_pid is null then
     insert into public.products (client_id, name, unidad, category_id, umbral, umbral_max)
       values (p_client_id, v_name, v_unidad, p_category_id, coalesce(p_umbral, 10), p_umbral_max)
-      returning id, client_id into v_pid, v_client_id;
+      returning products.id, products.client_id into v_pid, v_client_id;
   end if;
 
   insert into public.inventory (product_id, grupo_id, qnty)
@@ -1234,8 +1239,8 @@ begin
     on conflict (product_id, grupo_id) do update set deleted_at = null
     where inventory.deleted_at is not null;
 
-  if p_client_op_id is not null and exists (select 1 from public.movements where client_op_id = p_client_op_id) then
-    select qnty into v_qty from public.inventory where product_id = v_pid and grupo_id = v_grupo;
+  if p_client_op_id is not null and exists (select 1 from public.movements mv where mv.client_op_id = p_client_op_id) then
+    select inv.qnty into v_qty from public.inventory inv where inv.product_id = v_pid and inv.grupo_id = v_grupo;
     return query select v_pid, v_client_id, v_name, v_qty;
     return;
   end if;
@@ -1244,16 +1249,16 @@ begin
   if coalesce(p_qnty, 0) <> 0 then
     insert into public.movements (direction, note, client_op_id, delivered_by, grupo_id)
       values ('in', public.actor_note('Recepción'), p_client_op_id, v_ci, v_grupo)
-      returning id into v_mid;
+      returning movements.id into v_mid;
     insert into public.movement_items (movement_id, product_id, qnty) values (v_mid, v_pid, abs(p_qnty));
   end if;
 
-  update public.inventory
+  update public.inventory inv
      set last_counted_at = now(),
-         last_counted_by = coalesce((select name || ' ' || surname from public.persons where ci = v_ci), last_counted_by)
-   where product_id = v_pid and grupo_id = v_grupo;
+         last_counted_by = coalesce((select pr.name || ' ' || pr.surname from public.persons pr where pr.ci = v_ci), inv.last_counted_by)
+   where inv.product_id = v_pid and inv.grupo_id = v_grupo;
 
-  select qnty into v_qty from public.inventory where product_id = v_pid and grupo_id = v_grupo;
+  select inv.qnty into v_qty from public.inventory inv where inv.product_id = v_pid and inv.grupo_id = v_grupo;
   return query select v_pid, v_client_id, v_name, v_qty;
 end;
 $$;

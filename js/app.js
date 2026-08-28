@@ -14,7 +14,7 @@ import { renderVoluntarios } from './views/voluntarios.js';
 import { renderGrupos } from './views/grupos.js';
 import { renderDespachos } from './views/despachos.js';
 import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
-import { renderEgresoRapido, openEgreso } from './views/egresorapido.js';
+import { renderEgresoRapido, openEgreso, resetEgresoRapido } from './views/egresorapido.js';
 import { initAdmin, renderLoginWall } from './views/admin.js';
 import { initComunicados, refreshComunicados } from './views/comunicados.js';
 import { modal } from './components/modal.js';
@@ -139,6 +139,18 @@ async function _onGrupoChange(rawValue) {
     if (el) el.value = store.viewingGrupoId ?? '';
   });
   await store.loadCategories();
+  // Ingreso/Egreso Rápido: bloqueados sin un grupo puntual (ver
+  // views/ingresorapido.js#_blocked) — repintar para mostrar/ocultar ese
+  // aviso, y descartar cualquier selección/carrito a medias (era de otro
+  // filtro de grupo).
+  resetIngresoRapido();
+  resetEgresoRapido();
+  // ingresos.js/egresos.js cachean en memoria por sesión y no se
+  // reinvalidan solos (ver _cache ahí) — forzar refetch si esa pestaña está
+  // activa, si no el cambio de grupo no se reflejaría hasta un refresco
+  // ajeno (p.ej. el próximo ciclo de sync).
+  if (_current === 'ingresos') await refreshIngresos();
+  if (_current === 'egresos')  await refreshEgresos();
   await nav(_current);
 }
 

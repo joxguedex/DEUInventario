@@ -55,6 +55,12 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
   cantidad inicial → `store.addNuevo(...)`. Si no hay categorías creadas
   todavía, bloquea la creación con un aviso en vez de mostrar un `<select>`
   vacío.
+- **Bloqueado para `super_admin` con "Todos los grupos"** (`_blocked()`,
+  fix 2026-08-28): sin un grupo puntual elegido en la barra superior
+  (`store.viewingGrupoId == null`) no hay un inventario concreto al que
+  sumarle cantidad — el panel muestra un aviso en vez del buscador, en
+  lugar de dejar que la RPC lo rechace recién al guardar. Se repinta al
+  cambiar de grupo (`app.js#_onGrupoChange` llama a `resetIngresoRapido()`).
 - **`openSheet()`/`closeSheet()`** — hoja inferior en móvil (clase `.open`
   + backdrop + `body.qa-lock`).
 - **Herramientas admin** (`.qa-admin-tools`, solo `auth.isAdmin()`, en el
@@ -95,6 +101,12 @@ nuevo stock sin esperar al próximo pull incremental).
   estado del botón — para no perder lo que el usuario tenga a medio
   escribir (destino, buscador, cantidad de una fila) en cada ciclo de sync
   de fondo (cada 30s).
+- **Bloqueado para `super_admin` con "Todos los grupos"** (`_blocked()`,
+  fix 2026-08-28): mismo criterio que Ingreso Rápido — sin un grupo puntual
+  elegido no hay un stock concreto del que descontar. `resetEgresoRapido()`
+  (exportada) repinta el panel y descarta el carrito a medias cuando cambia
+  el filtro de grupo (`app.js#_onGrupoChange`), sin cerrar el panel ni
+  avisar al switcher (a diferencia de `closeEgreso()`).
 
 ## `views/registro.js` — Historial
 
@@ -119,6 +131,11 @@ tipo.
   tipo y hace scroll (`data-day` en cada grupo) hasta el día indicado.
   Llamada por `app.js` cuando se navega acá desde la flecha "Ver en
   Historial" de una tarjeta de Ingresos/Egresos.
+- **Etiqueta de grupo** (`_showGrupo()`, fix 2026-08-28): un `super_admin`
+  viendo "Todos los grupos" (sin filtrar) ve, junto al nombre de cada
+  insumo, un `.grupo-tag` con el grupo de extensión al que pertenece ese
+  registro (`movements.grupo_id`) — necesario porque el catálogo es
+  compartido: el mismo insumo puede tener movimientos de más de un grupo.
 
 ## `views/ingresos.js` — Reporte de recepciones
 
@@ -138,6 +155,14 @@ recepciones reales.
   ubicar y corregir/borrar un registro puntual sin buscarlo a mano. Un
   click en el resto de la tarjeta abre el **modal de detalle** del día
   (barras "lo más recibido" + línea de tiempo + exportar a Excel).
+- **Etiqueta de grupo** (`_showGrupo()`, fix 2026-08-28): mismo criterio
+  que Historial — con `super_admin` viendo "Todos los grupos", el top-3, las
+  barras del detalle y la línea de tiempo agrupan/etiquetan por
+  `(insumo, grupo)` en vez de solo por insumo, para no mezclar en un solo
+  número lo recibido por grupos distintos del mismo producto compartido.
+  `_cache` se refresca (`refreshIngresos()`) al cambiar el filtro de grupo
+  si la pestaña está activa (`app.js#_onGrupoChange`) — antes quedaba
+  desactualizado hasta el próximo ciclo de sync.
 
 ## `views/egresos.js` — Reporte de entregas
 
@@ -157,6 +182,9 @@ otro después (`merge_product`); `movement_items` → `products.name` es un
 join en vivo, así que un egreso viejo siempre refleja el nombre actual del
 insumo (incluido después de un merge), sin necesitar ninguna migración de
 datos.
+
+**Etiqueta de grupo**: mismo `_showGrupo()`/agrupación por `(insumo, grupo)`
+y refresco al cambiar de filtro que `ingresos.js` — ver arriba.
 
 ## `views/resumen.js` — Hero + estadísticas
 

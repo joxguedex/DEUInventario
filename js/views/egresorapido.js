@@ -85,6 +85,18 @@ function _resetState() {
   _pendingOpId = null;
 }
 
+// super_admin sin un grupo puntual elegido ("Todos los grupos") no tiene un
+// stock concreto del que descontar — bloquear acá en vez de dejar que
+// create_comanda_rapida lo rechace recién al confirmar (exige p_grupo_id).
+function _blocked() {
+  return auth.isSuperAdmin() && store.viewingGrupoId == null;
+}
+
+// Reinicia el formulario SIN cerrar el panel ni avisar al switcher (a
+// diferencia de closeEgreso) — usado cuando cambia el filtro de grupo
+// (app.js#_onGrupoChange): el carrito de un grupo no tiene sentido en otro.
+export function resetEgresoRapido() { _resetState(); _paint(); }
+
 // Activa el modo Egreso — llamado por el switcher (app.js) al cambiar de
 // pestaña dentro del panel compartido. Ya no abre un overlay propio (eso lo
 // resuelve el switcher mostrando/ocultando #qa-panel-egreso).
@@ -151,6 +163,9 @@ function _rowHtml(row, idx) {
 }
 
 function _body() {
+  if (_blocked()) {
+    return `<div class="qa-hint" style="margin-top:0">Elige un grupo de extensión específico en la barra superior para usar Egreso Rápido — con "Todos los grupos" no hay un stock puntual del que descontar.</div>`;
+  }
   const puedeEnviar = _destino.trim().length > 0
     && _rows.some(r => r.item && r.cantidad > 0)
     && sync.online

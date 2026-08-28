@@ -132,7 +132,20 @@ function _paintFoot() {
   if (auth.hasAdminRights()) _wireAdminTools(_footEl);
 }
 
+// super_admin sin un grupo puntual elegido ("Todos los grupos") no tiene un
+// inventario concreto al que sumarle cantidad — bloquear acá en vez de dejar
+// que la RPC lo rechace recién al intentar guardar (add_product_to_grupo/
+// apply_count exigen p_grupo_id, ver supabase/2026-08-25-productos-
+// multigrupo.sql).
+function _blocked() {
+  return auth.isSuperAdmin() && store.viewingGrupoId == null;
+}
+
 function _body() {
+  if (_blocked()) {
+    return `
+      <div class="qa-hint" style="margin-top:0">Elige un grupo de extensión específico en la barra superior para usar Ingreso Rápido — con "Todos los grupos" no hay un inventario puntual al que sumarle cantidad.</div>`;
+  }
   if (_sel) {
     const total = _sel.contado ? _sel.cantidad : 0;
     return `
@@ -208,6 +221,7 @@ function _body() {
 function _wire() {
   _host.querySelector('#qa-close-m')?.addEventListener('click', () => closeSheet());
   _host.querySelector('#qa-back')?.addEventListener('click', () => { _sel = null; _new = null; _paint(); _host.querySelector('#qa-search')?.focus(); });
+  if (_blocked()) return; // _body() ya pintó el aviso — sin buscador que cablear
 
   if (_sel) {
     const deltaInp  = _host.querySelector('#qa-delta');

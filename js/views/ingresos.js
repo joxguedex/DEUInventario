@@ -40,6 +40,16 @@ function _localDate(d) {
   const dt = d instanceof Date ? d : new Date(d);
   return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
 }
+function _grupoLabel(id) {
+  if (id == null) return null;
+  const g = store.grupos.find(x => x.id === id);
+  return g ? g.nombre : `Grupo ${id}`;
+}
+// super_admin viendo "Todos los grupos" (sin filtrar): un mismo insumo del
+// catálogo compartido puede haberlo recibido más de un grupo — hace falta
+// distinguir a cuál pertenece cada registro, si no los totales por insumo
+// mezclarían conteos de grupos distintos sin decirlo.
+function _showGrupo() { return auth.isSuperAdmin() && store.viewingGrupoId == null; }
 
 export function renderIngresos(rootEl) {
   _root = rootEl;
@@ -165,6 +175,8 @@ function _render() {
   _root.appendChild(wrap);
   const grid = wrap.querySelector('#ing-diary-grid');
 
+  const showGrupo = _showGrupo();
+
   for (const d of dates) {
     const recs  = byDate[d];
     const total = recs.reduce((s, r) => s + (r.cantidad || 0), 0);
@@ -173,8 +185,10 @@ function _render() {
 
     const topMap = {};
     for (const r of recs) {
-      const k = r.item_id || r.nombre;
-      (topMap[k] ||= { nombre: r.nombre, categoria: r.categoria, total: 0 }).total += r.cantidad || 0;
+      // Con grupo a la vista, separar el mismo insumo por grupo — si no, un
+      // solo número mezclaría el conteo de grupos distintos sin decirlo.
+      const k = (r.item_id || r.nombre) + (showGrupo ? `::${r.grupoId}` : '');
+      (topMap[k] ||= { nombre: r.nombre, categoria: r.categoria, grupoId: r.grupoId, total: 0 }).total += r.cantidad || 0;
     }
     const top3 = Object.values(topMap).sort((a, b) => b.total - a.total).slice(0, 3);
 
@@ -210,6 +224,7 @@ function _render() {
       <div class="idc-item">
         <div class="idc-item-dot" style="background:${catColor(it.categoria)}"></div>
         <div class="idc-item-name">${escHtml(it.nombre)}</div>
+        ${showGrupo && it.grupoId != null ? `<span class="grupo-tag">${escHtml(_grupoLabel(it.grupoId))}</span>` : ''}
         <div class="idc-item-qty">+${it.total.toLocaleString('es-VE')}</div>
       </div>`).join('')}
     </div>
@@ -225,11 +240,12 @@ function _render() {
 
 function _showDetail(date, records, isToday, isYest) {
   const total = records.reduce((s, r) => s + (r.cantidad || 0), 0);
+  const showGrupo = _showGrupo();
 
   const byItem = {};
   for (const r of records) {
-    const k = r.item_id || r.nombre;
-    (byItem[k] ||= { nombre: r.nombre, categoria: r.categoria, total: 0, entries: [] }).entries.push(r);
+    const k = (r.item_id || r.nombre) + (showGrupo ? `::${r.grupoId}` : '');
+    (byItem[k] ||= { nombre: r.nombre, categoria: r.categoria, grupoId: r.grupoId, total: 0, entries: [] }).entries.push(r);
     byItem[k].total += r.cantidad || 0;
   }
   const items = Object.values(byItem).sort((a, b) => b.total - a.total);
@@ -289,7 +305,7 @@ function _showDetail(date, records, isToday, isYest) {
             return `<div class="idm-bar-row">
               <div class="idm-bar-rank">${i + 1}</div>
               <div class="idm-bar-info">
-                <div class="idm-bar-name">${escHtml(it.nombre)}</div>
+                <div class="idm-bar-name">${escHtml(it.nombre)}${showGrupo && it.grupoId != null ? ` <span class="grupo-tag">${escHtml(_grupoLabel(it.grupoId))}</span>` : ''}</div>
                 <div class="idm-bar-track"><div class="idm-bar-fill" style="width:${w}%;background:${col}"></div></div>
               </div>
               <div class="idm-bar-qty" style="color:${col}">+${it.total.toLocaleString('es-VE')}</div>
@@ -308,7 +324,7 @@ function _showDetail(date, records, isToday, isYest) {
               <div class="idm-tl-dot" style="background:${catColor(r.categoria)}"></div>
               <div class="idm-tl-info">
                 <div class="idm-tl-name">${escHtml(r.nombre)}</div>
-                <div class="idm-tl-cat">${escHtml(catLabel(r.categoria))}</div>
+                <div class="idm-tl-cat">${escHtml(catLabel(r.categoria))}${showGrupo && r.grupoId != null ? ` · ${escHtml(_grupoLabel(r.grupoId))}` : ''}</div>
               </div>
               <div class="idm-tl-qty">+${(r.cantidad || 0).toLocaleString('es-VE')}</div>
             </div>`).join('')}

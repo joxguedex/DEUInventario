@@ -63,6 +63,15 @@ function _fmtDayLong(iso) {
 function _fmtTime(ts) {
   return new Date(ts).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
 }
+function _grupoLabel(id) {
+  if (id == null) return null;
+  const g = store.grupos.find(x => x.id === id);
+  return g ? g.nombre : `Grupo ${id}`;
+}
+// super_admin viendo "Todos los grupos" (sin filtrar): un mismo insumo del
+// catálogo compartido puede tener movimientos de más de un grupo — hace
+// falta decir a cuál pertenece cada registro.
+function _showGrupo() { return auth.isSuperAdmin() && store.viewingGrupoId == null; }
 
 export async function renderRegistro(rootEl) {
   _root = rootEl;
@@ -255,7 +264,7 @@ function _rowHTML(r) {
       <div class="reg-time">${_fmtTime(r.ts)}</div>
       <div class="reg-dot" style="background:${col}"></div>
       <div class="reg-info">
-        <div class="reg-name">${escHtml(r.nombre)} ${r.tipo ? `<span class="tag ${TIPO_TAG[r.tipo] || 'tag-gray'}" style="margin-left:4px">${r.tipo}</span>` : ''}</div>
+        <div class="reg-name">${escHtml(r.nombre)} ${r.tipo ? `<span class="tag ${TIPO_TAG[r.tipo] || 'tag-gray'}" style="margin-left:4px">${r.tipo}</span>` : ''}${_showGrupo() && r.grupoId != null ? ` <span class="grupo-tag">${escHtml(_grupoLabel(r.grupoId))}</span>` : ''}</div>
         <div class="reg-meta">${escHtml(r.contado_por || 'sin nombre')}${r.cantidad === 0 ? ' · confirmó 0' : ''}</div>
       </div>
       <div class="reg-qty ${neg ? 'neg' : ''}">${neg ? '' : '+'}${r.cantidad.toLocaleString('es-VE')}</div>
