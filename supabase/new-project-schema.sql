@@ -1204,6 +1204,7 @@ create or replace function public.add_product_to_grupo(
   p_grupo_id       bigint default null
 ) returns table(product_id bigint, client_id text, name text, qnty integer)
 language plpgsql security definer set search_path = public as $$
+#variable_conflict use_column
 declare
   v_grupo bigint; v_pid bigint; v_client_id text; v_name text; v_unidad text;
   v_mid bigint; v_ci bigint; v_qty integer;

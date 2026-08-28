@@ -74,7 +74,17 @@ Secciones, en orden:
     segundo termina sumándose al producto del primero en vez de fallar.
     `ingresorapido.js#_loadCatalogCache()` (sugerencia "usados por otros
     grupos") reduce cuánto se da esta carrera refrescándose seguido, pero la
-    integridad la garantiza esto, no esa caché. Adjunta/revive la fila
+    integridad la garantiza esto, no esa caché. Lleva `#variable_conflict
+    use_column` (fix 2026-08-30, mismo pragma que `create_person`/
+    `list_users_with_access`): sus columnas de salida (`returns
+    table(product_id, client_id, name, qnty)`) coinciden de nombre con
+    columnas reales de `products`/`inventory`, y el `insert into
+    sibex.inventory (product_id, ...) ... on conflict (product_id, ...)` de
+    la rama "adoptar insumo ya existente" seguía disparando "column
+    reference product_id is ambiguous" aun después de calificar
+    client_id/name/qnty a mano (fix 2026-08-28) — el pragma resuelve
+    cualquier ambigüedad de este tipo a favor de la columna, de una vez, en
+    vez de seguir cazando referencias sueltas una por una. Adjunta/revive la fila
     `inventory` de ese grupo y, si `p_qnty ≠ 0`, registra el conteo inicial
     vía movimiento (mismo motor que `apply_count`). `remove_product_from_grupo
     (p_product_client_id, p_grupo_id)`: soft-borra (`inventory.deleted_at`)
