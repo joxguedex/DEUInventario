@@ -47,9 +47,13 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
   dentro de `boot()` — casi siempre ANTES de que existiera sesión (RLS de
   `products` exige `authenticated`), así que la caché quedaba vacía para
   siempre y esta sección nunca aparecía (fix 2026-08-28). Ahora también se
-  recarga desde `resetIngresoRapido()`, que `app.js#checkAuth()` llama tras
-  un login fresco (ya con `store.categories` al día) y
-  `app.js#_onGrupoChange()` llama al cambiar de grupo.
+  recarga desde `resetIngresoRapido()` (login fresco/cambio de grupo, ver
+  `app.js#checkAuth()`/`#_onGrupoChange()`) y en cada ciclo de sync
+  (`sync.onChange`, automático cada 30s o antes por Realtime — fix
+  2026-08-29) para acortar la ventana en la que dos grupos ven "hueco" el
+  mismo insumo nuevo. Esto es solo UX: la integridad (que no queden dos
+  filas de `products` duplicadas si aun así chocan) la garantiza
+  `add_product_to_grupo` del lado del servidor — ver más abajo.
 - **Insumo existente (mi grupo)**: total actual + input de cantidad +
   "Sumar" → `store.registrar(id, n, {origen:'ingreso'})`.
 - **Sugerencia de otro grupo**: abre el mismo formulario de "insumo nuevo"
@@ -271,7 +275,12 @@ coordinador).
 
 **Edición** (`#vol-edit-modal`, `window.editVolunteer(ci)`) — edita **toda**
 la información de un usuario existente: nombre, apellido, **cédula**,
-teléfono, correo, área y (opcional) contraseña. Al guardar:
+teléfono, correo, área y (opcional) contraseña. El campo Área
+(`#vol-edit-area-field`) también está **oculto a propósito** (fix
+2026-08-29) — `editVolunteer()` sigue precargando el `<select>` oculto con
+el área ACTUAL de la persona (`v.area`) antes de abrir el modal, así que
+editar el resto de los datos no se la cambia sin querer; solo deja de ser
+reasignable desde acá mientras el selector esté oculto. Al guardar:
 
 1. `admin_update_person` (RPC) — nombre/apellido/teléfono, y si la cédula
    cambió, la renombra (ver abajo).

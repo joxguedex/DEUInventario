@@ -46,7 +46,12 @@ Secciones, en orden:
 9. **Categorías** — catálogo COMPARTIDO entre grupos (revisión "productos
    multigrupo", 2026-08-25): `create_category(p_nombre, p_grupo_id)` busca
    por nombre (case-insensitive) y reutiliza si existe, si no crea y
-   vincula al grupo (`category_grupos`, M2M); `update_category` (rename
+   vincula al grupo (`category_grupos`, M2M) — el INSERT va envuelto en un
+   `begin/exception when unique_violation` (fix 2026-08-29): dos grupos
+   creando la misma categoría casi al mismo tiempo pueden pasar el SELECT
+   los dos sin verse, `categories_nombre_unique_idx` evita la fila
+   duplicada pero sin el catch el segundo se llevaba un 409 crudo en vez de
+   terminar vinculándose a la del primero. `update_category` (rename
    global, afecta a todos los grupos que la usan); `delete_category(p_id,
    p_force, p_grupo_id)` desvincula del grupo (bloquea si hay conteos vivos
    de esa categoría en ESE grupo, salvo `p_force`; borra la categoría real
@@ -62,7 +67,14 @@ Secciones, en orden:
 10. **Productos ↔ grupo** — `add_product_to_grupo(p_client_id, p_name,
     p_unidad, p_category_id, p_umbral, p_umbral_max, p_qnty, p_client_op_id,
     p_grupo_id)`: busca un producto VIVO en la categoría por nombre+unidad
-    (catálogo compartido) y lo reutiliza, o lo crea; adjunta/revive la fila
+    (catálogo compartido) y lo reutiliza, o lo crea — mismo patrón
+    `begin/exception when unique_violation` que `create_category` (fix
+    2026-08-29): si dos grupos agregan el mismo insumo nuevo casi a la vez,
+    `products_category_name_unidad_unique_idx` evita la fila duplicada y el
+    segundo termina sumándose al producto del primero en vez de fallar.
+    `ingresorapido.js#_loadCatalogCache()` (sugerencia "usados por otros
+    grupos") reduce cuánto se da esta carrera refrescándose seguido, pero la
+    integridad la garantiza esto, no esa caché. Adjunta/revive la fila
     `inventory` de ese grupo y, si `p_qnty ≠ 0`, registra el conteo inicial
     vía movimiento (mismo motor que `apply_count`). `remove_product_from_grupo
     (p_product_client_id, p_grupo_id)`: soft-borra (`inventory.deleted_at`)

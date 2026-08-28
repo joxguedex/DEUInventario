@@ -1005,7 +1005,16 @@ begin
 
   select id into v_id from sibex.categories where lower(nombre) = lower(v_nombre);
   if v_id is null then
-    insert into sibex.categories (nombre) values (v_nombre) returning id into v_id;
+    -- Mismo tipo de carrera que add_product_to_grupo (dos grupos creando la
+    -- misma categoría casi al mismo tiempo) — categories_nombre_unique_idx
+    -- ya lo impide a nivel de fila, este catch evita el unique_violation
+    -- crudo y hace que el segundo termine vinculándose a la del primero.
+    begin
+      insert into sibex.categories (nombre) values (v_nombre) returning id into v_id;
+    exception when unique_violation then
+      select id into v_id from sibex.categories where lower(nombre) = lower(v_nombre);
+      if v_id is null then raise; end if;
+    end;
   end if;
 
   insert into sibex.category_grupos (category_id, grupo_id) values (v_id, v_grupo)
@@ -1155,9 +1164,26 @@ begin
      and lower(btrim(pr.name)) = lower(v_name) and pr.deleted_at is null;
 
   if v_pid is null then
-    insert into sibex.products (client_id, name, unidad, category_id, umbral, umbral_max)
-      values (p_client_id, v_name, v_unidad, p_category_id, coalesce(p_umbral, 10), p_umbral_max)
-      returning products.id, products.client_id into v_pid, v_client_id;
+    -- Carrera entre grupos: dos coordinadores de grupos distintos pueden
+    -- pasar el SELECT de arriba a la vez (ninguno ve el insumo del otro
+    -- todavía) e intentar insertar el mismo (category_id, nombre, unidad)
+    -- casi al mismo tiempo. El índice único parcial
+    -- (products_category_name_unidad_unique_idx) ya lo impide a nivel de
+    -- fila, pero sin este catch el segundo en llegar se llevaba un
+    -- unique_violation (409) crudo en vez de terminar sumándose al mismo
+    -- producto que el primero — mismo resultado que si hubiera usado
+    -- "adoptar" de otro grupo, solo que resuelto DESPUÉS del choque.
+    begin
+      insert into sibex.products (client_id, name, unidad, category_id, umbral, umbral_max)
+        values (p_client_id, v_name, v_unidad, p_category_id, coalesce(p_umbral, 10), p_umbral_max)
+        returning products.id, products.client_id into v_pid, v_client_id;
+    exception when unique_violation then
+      select pr.id, pr.client_id into v_pid, v_client_id
+        from sibex.products pr
+       where pr.category_id = p_category_id and pr.unidad = v_unidad
+         and lower(btrim(pr.name)) = lower(v_name) and pr.deleted_at is null;
+      if v_pid is null then raise; end if;
+    end;
   end if;
 
   insert into sibex.inventory (product_id, grupo_id, qnty)

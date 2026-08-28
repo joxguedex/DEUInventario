@@ -234,7 +234,7 @@ export function renderVoluntarios(container) {
             <label>Correo electrónico</label>
             <input type="email" id="vol-edit-email" required placeholder="correo@ejemplo.com">
           </div>
-          <div class="adm-field">
+          <div class="adm-field" id="vol-edit-area-field" style="display:none">
             <label>Área</label>
             <select id="vol-edit-area" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
               ${_areaOptionsHTML()}
@@ -252,14 +252,23 @@ export function renderVoluntarios(container) {
       </div>
     </div>`;
 
-  // Selección de Área oculta por el momento al crear (fix 2026-08-28): todo
-  // usuario nuevo se crea con área "general" (primera opción de
-  // _areaOptionsHTML, queda seleccionada por defecto sin tocar nada) — ver
-  // auth.js#canEditInventory(), que ahora incluye a "general" para que
-  // pueda administrar todas las categorías de su grupo (antes era
-  // consulta+despacho solamente). El `<select>` sigue existiendo oculto
-  // (no se borra el flujo, por si se reactiva más adelante) y su valor
-  // igual se manda en el submit — grantLogin ya lo ignora para rol admin.
+  // Selección de Área oculta por el momento, tanto al crear como al editar
+  // (fix 2026-08-28/29) — el `<select>` sigue existiendo en ambos formularios
+  // (no se borra el flujo, por si se reactiva más adelante), solo no se
+  // muestra:
+  //   - Crear (#vol-area-field): todo usuario nuevo se crea con área
+  //     "general" (primera opción de _areaOptionsHTML, queda seleccionada
+  //     sin tocar nada) — ver auth.js#canEditInventory(), que ahora incluye
+  //     a "general" para que pueda administrar todas las categorías de su
+  //     grupo (antes era consulta+despacho solamente).
+  //   - Editar (#vol-edit-area-field): "Editar" solo se ofrece para
+  //     coordinador (nunca admin, ver más abajo), así que sí importa lo que
+  //     lleve el `<select>` — editVolunteer() lo precarga con el área
+  //     ACTUAL de la persona (`v.area`) antes de abrir el modal, así que
+  //     editar el resto de los datos no se la cambia sin querer; solo deja
+  //     de ser reasignable desde acá mientras el selector esté oculto.
+  // En Crear, el valor SÍ se manda igual para rol admin (siempre 'general')
+  // pero grant_login ya lo ignora ahí — un admin no tiene categoría propia.
 
   // Cambiar de grupo en el formulario recarga las categorías de ESE grupo
   // para el selector de Área (puede ser distinto del grupo elegido en la

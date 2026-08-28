@@ -40,10 +40,15 @@ let _new = null;   // { nombre, categoria?, unidad?, umbral?, umbralMax?, reused
 
 // Catálogo compartido: productos ya usados por OTROS grupos en las mismas
 // categorías que mi grupo (store.categories) — permite sugerirlos como
-// "adoptar" en vez de crear un duplicado. Se recarga al abrir el panel
-// (best-effort, sin bloquear) — una sugerencia levemente desactualizada no
-// importa: al elegirla, add_product_to_grupo resuelve el producto real
-// server-side de todos modos (ver store.js#addNuevo).
+// "adoptar" en vez de crear un duplicado. Se recarga al abrir el panel, al
+// cambiar de grupo/re-loguear (resetIngresoRapido(), ver app.js) y en cada
+// ciclo de sync (más abajo) — best-effort, sin bloquear: una sugerencia
+// levemente desactualizada no es un problema de INTEGRIDAD (si dos grupos
+// crean el mismo insumo casi a la vez de todos modos, add_product_to_grupo
+// resuelve la carrera del lado del servidor sin duplicar la fila — ver el
+// catch de unique_violation ahí, fix 2026-08-29), solo de UX: mientras más
+// fresca esté, más frecuente que el segundo grupo vea "adoptar" en vez de
+// "crear" para el mismo nombre.
 let _catalogCache = [];
 async function _loadCatalogCache() {
   if (!navigator.onLine) return;
@@ -57,6 +62,12 @@ async function _loadCatalogCache() {
     if (res.ok) _catalogCache = await res.json();
   } catch { /* sin red: se queda con lo último cargado */ }
 }
+
+// sync.onChange dispara en cada ciclo (automático cada 30s, o antes por
+// Realtime si products/inventory cambia en cualquier grupo) — recargar acá
+// mantiene la sugerencia "usados por otros grupos" al día casi en vivo sin
+// necesitar un timer propio.
+sync.onChange(() => { _loadCatalogCache(); });
 
 export function renderIngresoRapido(shellEl, opts = {}) {
   _shell = shellEl;
