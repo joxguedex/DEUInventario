@@ -114,6 +114,11 @@ export function closeEgreso() {
   _onClose?.();
 }
 
+// Sin botón "X": Egreso Rápido es una pestaña al mismo nivel que Ingreso
+// Rápido dentro del switcher compartido (#qa-switcher, ver app.js#_setQaMode),
+// no un panel anidado "dentro" de Ingreso — cerrar la hoja entera es trabajo
+// del qa-close-m de Ingreso; volver de Egreso a Ingreso es tocar la pestaña
+// "Ingreso Rápido" del switcher, no una X que "cierre" Egreso.
 function _head() {
   return `
     <div class="qa-head eg-head">
@@ -124,9 +129,6 @@ function _head() {
         <div class="qa-title">Egreso Rápido</div>
         <div class="qa-sub">Genera una comanda de entrega</div>
       </div>
-      <button class="qa-close-m eg-close" id="eg-close" aria-label="Cerrar">
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
     </div>`;
 }
 
@@ -195,8 +197,6 @@ function _paint() {
 }
 
 function _wire() {
-  _host.querySelector('#eg-close')?.addEventListener('click', closeEgreso);
-
   // ── Destino ──
   _host.querySelector('#eg-destino')?.addEventListener('input', e => {
     _destino = e.target.value;

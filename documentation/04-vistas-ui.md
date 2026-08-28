@@ -83,6 +83,13 @@ no pasa por `sync.enqueue`, el módulo aplica un parche local manual sobre
 `store.items` tras confirmar (para que la tarjeta en Insumos refleje el
 nuevo stock sin esperar al próximo pull incremental).
 
+- **Sin botón "X" en el encabezado** (fix 2026-08-28): Egreso Rápido es una
+  pestaña al mismo nivel que Ingreso Rápido dentro del switcher compartido
+  (`#qa-switcher`), no un panel anidado "dentro" de Ingreso — cerrar la hoja
+  entera sigue siendo trabajo exclusivo del `qa-close-m` de Ingreso; volver
+  de Egreso a Ingreso es tocar la pestaña del switcher, no una X que
+  "cerraba" Egreso (antes llamaba a `closeEgreso()`, que en realidad solo
+  cambiaba de pestaña).
 - **Carrito** (`_rows`): búsqueda de producto por fila (excluye ítems sin
   `db_id`, es decir, no sincronizados todavía), cantidad por fila con aviso
   si excede el stock disponible.

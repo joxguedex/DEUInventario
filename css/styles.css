@@ -472,7 +472,6 @@ input[type=number]{-moz-appearance:textfield}
    chicos significan menos scroll y más filas visibles a la vez. */
 .eg-head{border-bottom:1px solid rgba(255,255,255,.08)}
 .eg-head-icon{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.3);color:#fca5a5}
-.eg-close{display:flex}
 .eg-body{display:flex;flex-direction:column;gap:14px;max-width:520px;width:100%;margin:0 auto;padding-top:12px}
 
 .eg-section{display:flex;flex-direction:column;gap:6px}
