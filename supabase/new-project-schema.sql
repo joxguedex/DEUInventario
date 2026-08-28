@@ -2058,10 +2058,23 @@ create policy movements_select on public.movements for select
     )
   );
 
+-- movement_grupo(): lee movements.grupo_id sin pasar por su propia RLS
+-- (mismo patrón que current_person_ci() con persons, más arriba). Necesario
+-- porque movements_select YA consulta movement_items (arriba) — si
+-- movement_items_select consultara movements de vuelta con un EXISTS
+-- normal, las dos policies se referenciarían entre sí en ambas direcciones
+-- y Postgres no puede resolver la expansión ("infinite recursion detected
+-- in policy"), que PostgREST devuelve como 500 en cualquier JOIN entre las
+-- dos tablas (p.ej. Historial de Ingresos/Egresos).
+create or replace function public.movement_grupo(p_movement_id bigint) returns bigint
+language sql stable security definer set search_path = public as $$
+  select grupo_id from public.movements where id = p_movement_id
+$$;
+
 create policy movement_items_select on public.movement_items for select
   to authenticated using (
     exists (select 1 from public.products p where p.id = movement_items.product_id and public.can_access_category(p.category_id))
-    and exists (select 1 from public.movements m where m.id = movement_items.movement_id and public.can_access_grupo(m.grupo_id))
+    and public.can_access_grupo(public.movement_grupo(movement_items.movement_id))
   );
 
 create policy requests_select on public.requests for select
@@ -2083,10 +2096,16 @@ create policy comandas_select on public.comandas for select
       where ci.comanda_id = comandas.id and public.can_access_category(p.category_id)
     )
   );
+-- comanda_grupo(): mismo motivo/patrón que movement_grupo() arriba.
+create or replace function public.comanda_grupo(p_comanda_id bigint) returns bigint
+language sql stable security definer set search_path = public as $$
+  select grupo_id from public.comandas where id = p_comanda_id
+$$;
+
 create policy comanda_items_select on public.comanda_items for select
   to authenticated using (
     exists (select 1 from public.products p where p.id = comanda_items.producto_id and public.can_access_category(p.category_id))
-    and exists (select 1 from public.comandas c where c.id = comanda_items.comanda_id and public.can_access_grupo(c.grupo_id))
+    and public.can_access_grupo(public.comanda_grupo(comanda_items.comanda_id))
   );
 
 -- grupos: cualquier sesión lee (hace falta para poblar el switcher de grupo

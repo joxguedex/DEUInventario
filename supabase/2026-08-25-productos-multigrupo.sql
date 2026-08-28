@@ -1019,7 +1019,30 @@ grant execute on function sibex.marcar_despacho_entregado(bigint) to authenticat
 --  15. ROW LEVEL SECURITY — categories (lectura global para el buscador),
 --      category_grupos (nueva), inventory/movements/movement_items/
 --      comandas/comanda_items (agregan chequeo de grupo de la fila).
+--
+--  movement_grupo()/comanda_grupo() (fix 2026-08-28): movement_items_select
+--  y comanda_items_select necesitan el grupo_id de su fila padre
+--  (movements/comandas) para el chequeo de can_access_grupo. Leerlo con un
+--  EXISTS directo contra esas tablas dispara SU RLS, que a su vez vuelve a
+--  consultar movement_items/comanda_items (movements_select/comandas_select
+--  ya lo hacían desde antes) — dos policies referenciándose entre sí en
+--  ambas direcciones y Postgres no puede resolver la expansión ("infinite
+--  recursion detected in policy for relation ..."), que PostgREST devuelve
+--  como 500 en cualquier query que haga JOIN entre las dos tablas (p.ej.
+--  Historial de Ingresos/Egresos). Mismo patrón que current_person_ci()
+--  más arriba (lee sibex.persons sin pasar por su RLS): security definer
+--  rompe el ciclo porque corre como el dueño de la función, exento de RLS.
 -- ══════════════════════════════════════════════════════════════════════════
+
+create or replace function sibex.movement_grupo(p_movement_id bigint) returns bigint
+language sql stable security definer set search_path = sibex as $$
+  select grupo_id from sibex.movements where id = p_movement_id
+$$;
+
+create or replace function sibex.comanda_grupo(p_comanda_id bigint) returns bigint
+language sql stable security definer set search_path = sibex as $$
+  select grupo_id from sibex.comandas where id = p_comanda_id
+$$;
 
 alter table sibex.category_grupos enable row level security;
 create policy category_grupos_select on sibex.category_grupos for select
@@ -1061,7 +1084,7 @@ drop policy movement_items_select on sibex.movement_items;
 create policy movement_items_select on sibex.movement_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = movement_items.product_id and sibex.can_access_category(p.category_id))
-    and exists (select 1 from sibex.movements m where m.id = movement_items.movement_id and sibex.can_access_grupo(m.grupo_id))
+    and sibex.can_access_grupo(sibex.movement_grupo(movement_items.movement_id))
   );
 
 drop policy comandas_select on sibex.comandas;
@@ -1078,5 +1101,5 @@ drop policy comanda_items_select on sibex.comanda_items;
 create policy comanda_items_select on sibex.comanda_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = comanda_items.producto_id and sibex.can_access_category(p.category_id))
-    and exists (select 1 from sibex.comandas c where c.id = comanda_items.comanda_id and sibex.can_access_grupo(c.grupo_id))
+    and sibex.can_access_grupo(sibex.comanda_grupo(comanda_items.comanda_id))
   );

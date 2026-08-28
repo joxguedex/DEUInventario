@@ -1984,10 +1984,23 @@ create policy movements_select on sibex.movements for select
     )
   );
 
+-- movement_grupo(): lee movements.grupo_id sin pasar por su propia RLS
+-- (mismo patrón que current_person_ci() con persons, más arriba). Necesario
+-- porque movements_select YA consulta movement_items (arriba) — si
+-- movement_items_select consultara movements de vuelta con un EXISTS
+-- normal, las dos policies se referenciarían entre sí en ambas direcciones
+-- y Postgres no puede resolver la expansión ("infinite recursion detected
+-- in policy"), que PostgREST devuelve como 500 en cualquier JOIN entre las
+-- dos tablas (p.ej. Historial de Ingresos/Egresos).
+create or replace function sibex.movement_grupo(p_movement_id bigint) returns bigint
+language sql stable security definer set search_path = sibex as $$
+  select grupo_id from sibex.movements where id = p_movement_id
+$$;
+
 create policy movement_items_select on sibex.movement_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = movement_items.product_id and sibex.can_access_category(p.category_id))
-    and exists (select 1 from sibex.movements m where m.id = movement_items.movement_id and sibex.can_access_grupo(m.grupo_id))
+    and sibex.can_access_grupo(sibex.movement_grupo(movement_items.movement_id))
   );
 
 create policy requests_select on sibex.requests for select
@@ -2009,10 +2022,16 @@ create policy comandas_select on sibex.comandas for select
       where ci.comanda_id = comandas.id and sibex.can_access_category(p.category_id)
     )
   );
+-- comanda_grupo(): mismo motivo/patrón que movement_grupo() arriba.
+create or replace function sibex.comanda_grupo(p_comanda_id bigint) returns bigint
+language sql stable security definer set search_path = sibex as $$
+  select grupo_id from sibex.comandas where id = p_comanda_id
+$$;
+
 create policy comanda_items_select on sibex.comanda_items for select
   to authenticated using (
     exists (select 1 from sibex.products p where p.id = comanda_items.producto_id and sibex.can_access_category(p.category_id))
-    and exists (select 1 from sibex.comandas c where c.id = comanda_items.comanda_id and sibex.can_access_grupo(c.grupo_id))
+    and sibex.can_access_grupo(sibex.comanda_grupo(comanda_items.comanda_id))
   );
 
 -- grupos: cualquier sesión lee (hace falta para poblar el switcher de grupo
