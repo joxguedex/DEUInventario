@@ -439,6 +439,11 @@ async function boot() {
   document.querySelectorAll('.qa-switch-btn').forEach(b =>
     b.addEventListener('click', () => _setQaMode(b.dataset.mode)));
 
+  // Cierre de la hoja móvil — compartido entre los dos modos (fix
+  // 2026-08-29): vive en #qa-switcher (index.html), no dentro de
+  // #qa-panel-ingreso/#qa-panel-egreso, para no desaparecer al alternar.
+  document.getElementById('qa-close-shell')?.addEventListener('click', closeSheet);
+
   // FAB + backdrop (móvil) — siempre entra mostrando primero el modo que le
   // corresponda por defecto (Ingreso si puede editar, si no Egreso).
   document.getElementById('fab-qa')?.addEventListener('click', () => {

@@ -100,6 +100,13 @@
     <div class="qa-switcher" id="qa-switcher">
       <button class="qa-switch-btn active" data-mode="ingreso" id="qa-switch-ingreso">Ingreso Rápido</button>
       <button class="qa-switch-btn" data-mode="egreso" id="qa-switch-egreso">Egreso Rápido</button>
+      <!-- Compartido entre los dos modos (a diferencia del qa-close-m que
+           tenía cada panel antes, ver views/ingresorapido.js): vive afuera
+           de #qa-panel-ingreso/#qa-panel-egreso para no desaparecer al
+           alternar, ya que solo uno de los dos está visible a la vez. -->
+      <button class="qa-close-m" id="qa-close-shell" aria-label="Cerrar">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
     </div>
     <div id="qa-panel-ingreso"></div>
     <div id="qa-panel-egreso" style="display:none"></div>

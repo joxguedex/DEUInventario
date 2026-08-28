@@ -103,6 +103,11 @@ export function renderIngresoRapido(shellEl, opts = {}) {
 // vacía para siempre) y tras cambiar de grupo (categorías distintas).
 export function resetIngresoRapido() { _sel = null; _new = null; _paint(); _paintFoot(); _loadCatalogCache(); }
 
+// Sin botón "X" propio (fix 2026-08-29): vivía acá y desaparecía al
+// alternar a Egreso Rápido, porque #qa-panel-ingreso entero se oculta con
+// ese cambio (ver app.js#_setQaMode). El cierre de la hoja móvil ahora es
+// #qa-close-shell, compartido, dentro de #qa-switcher en index.html —
+// visible sin importar el modo activo, y cableado en app.js (boot()), no acá.
 function _head() {
   return `
     <div class="qa-head">
@@ -113,9 +118,6 @@ function _head() {
         <div class="qa-title">Ingreso Rápido</div>
         <div class="qa-sub">Cuenta insumos al instante</div>
       </div>
-      <button class="qa-close-m" id="qa-close-m" aria-label="Cerrar">
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.4" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
     </div>`;
 }
 
@@ -246,7 +248,6 @@ function _body() {
 }
 
 function _wire() {
-  _host.querySelector('#qa-close-m')?.addEventListener('click', () => closeSheet());
   _host.querySelector('#qa-back')?.addEventListener('click', () => { _sel = null; _new = null; _paint(); _host.querySelector('#qa-search')?.focus(); });
   if (_blocked()) return; // _body() ya pintó el aviso — sin buscador que cablear
 
@@ -336,7 +337,14 @@ function _sugg(q, box) {
   // grupos, que mi grupo todavía no cuenta (si ya lo cuento, ya está arriba)
   // — sugerirlos evita crear un duplicado con nombre/unidad ligeramente
   // distinto (ver _loadCatalogCache).
-  const mine = new Set(store.items.map(i => i.productClientId));
+  // store.visibleItems() (no store.items): para un super_admin, store.items
+  // trae TODOS los grupos a la vez (RLS lo deja ver todo, ver
+  // store.js#visibleItems), así que "mine" con store.items directo incluía
+  // insumos de CUALQUIER grupo — casi cualquier producto compartido ya
+  // aparecía en algún grupo, así que esta sección quedaba vacía siempre
+  // para super_admin. visibleItems() ya filtra por el grupo elegido en la
+  // barra superior (mismo que usa el top de arriba, dos líneas más arriba).
+  const mine = new Set(store.visibleItems().map(i => i.productClientId));
   const otros = _catalogCache
     .filter(p => !mine.has(p.client_id) && normSearch(p.name).includes(nq))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'))

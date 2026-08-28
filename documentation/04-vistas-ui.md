@@ -54,6 +54,14 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
   mismo insumo nuevo. Esto es solo UX: la integridad (que no queden dos
   filas de `products` duplicadas si aun así chocan) la garantiza
   `add_product_to_grupo` del lado del servidor — ver más abajo.
+  **Bug aparte que sí la vaciaba del todo para `super_admin`** (fix
+  2026-08-29): el filtro `mine` (insumos que "ya cuento", para no
+  resugerirlos) se armaba con `store.items` directo — para un super_admin
+  eso trae TODOS los grupos a la vez (RLS lo deja ver todo), así que
+  cualquier producto ya contado por CUALQUIER grupo quedaba excluido, y la
+  sección de "otros grupos" terminaba vacía casi siempre. Corregido a
+  `store.visibleItems()` (ya filtrado al grupo elegido en la barra
+  superior, mismo criterio que el resto de las sugerencias).
 - **Insumo existente (mi grupo)**: total actual + input de cantidad +
   "Sumar" → `store.registrar(id, n, {origen:'ingreso'})`.
 - **Sugerencia de otro grupo**: abre el mismo formulario de "insumo nuevo"
@@ -94,13 +102,18 @@ no pasa por `sync.enqueue`, el módulo aplica un parche local manual sobre
 `store.items` tras confirmar (para que la tarjeta en Insumos refleje el
 nuevo stock sin esperar al próximo pull incremental).
 
-- **Sin botón "X" en el encabezado** (fix 2026-08-28): Egreso Rápido es una
-  pestaña al mismo nivel que Ingreso Rápido dentro del switcher compartido
-  (`#qa-switcher`), no un panel anidado "dentro" de Ingreso — cerrar la hoja
-  entera sigue siendo trabajo exclusivo del `qa-close-m` de Ingreso; volver
-  de Egreso a Ingreso es tocar la pestaña del switcher, no una X que
+- **Sin botón "X" propio en el encabezado** (fix 2026-08-28): Egreso Rápido
+  es una pestaña al mismo nivel que Ingreso Rápido dentro del switcher
+  compartido (`#qa-switcher`), no un panel anidado "dentro" de Ingreso;
+  volver de Egreso a Ingreso es tocar la pestaña del switcher, no una X que
   "cerraba" Egreso (antes llamaba a `closeEgreso()`, que en realidad solo
-  cambiaba de pestaña).
+  cambiaba de pestaña). Cerrar la hoja móvil entera es trabajo de
+  `#qa-close-shell` — al principio se dejó ese botón solo en el encabezado
+  de Ingreso, pero **desaparecía al alternar a Egreso** (`#qa-panel-ingreso`
+  entero se oculta con `_setQaMode`, ver más abajo), así que se movió a
+  `#qa-switcher` en `index.html` (fix 2026-08-29): vive afuera de los dos
+  paneles, visible sin importar el modo activo, cableado directo en
+  `app.js` (`boot()`) en vez de en el `_wire()` de cada panel.
 - **Carrito** (`_rows`): búsqueda de producto por fila (excluye ítems sin
   `db_id`, es decir, no sincronizados todavía), cantidad por fila con aviso
   si excede el stock disponible.

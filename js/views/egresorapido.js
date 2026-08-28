@@ -117,8 +117,10 @@ export function closeEgreso() {
 // Sin botón "X": Egreso Rápido es una pestaña al mismo nivel que Ingreso
 // Rápido dentro del switcher compartido (#qa-switcher, ver app.js#_setQaMode),
 // no un panel anidado "dentro" de Ingreso — cerrar la hoja entera es trabajo
-// del qa-close-m de Ingreso; volver de Egreso a Ingreso es tocar la pestaña
-// "Ingreso Rápido" del switcher, no una X que "cierre" Egreso.
+// de #qa-close-shell, compartido dentro de #qa-switcher (fix 2026-08-29: no
+// vive en ninguno de los dos paneles, así no desaparece al alternar); volver
+// de Egreso a Ingreso es tocar la pestaña "Ingreso Rápido" del switcher, no
+// una X que "cierre" Egreso.
 function _head() {
   return `
     <div class="qa-head eg-head">
