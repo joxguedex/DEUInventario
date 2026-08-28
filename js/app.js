@@ -79,7 +79,7 @@ function _syncAccSubnav(page) {
 // #qa-panel-egreso. Por defecto siempre arranca en 'ingreso'.
 let _qaMode = 'ingreso';
 function _setQaMode(mode) {
-  if (mode === 'ingreso' && !auth.canEditInventory()) return; // "General": solo Egreso, defensivo (ver applyRBAC)
+  if (mode === 'ingreso' && !auth.canEditInventory()) return; // defensivo — ver applyRBAC/auth.js#canEditInventory()
   if (_qaMode === mode) return;
   _qaMode = mode;
   const pIngreso = document.getElementById('qa-panel-ingreso');
@@ -189,14 +189,17 @@ function applyRBAC() {
   });
   if (auth.isSuperAdmin()) _paintGrupoSwitch();
 
-  // El coordinador del área "General" solo consulta el inventario (nunca lo
-  // modifica, ver auth.js#canEditInventory()): la pestaña "Ingreso Rápido"
-  // del switcher se oculta entera — a diferencia de Egreso Rápido, que sí
-  // conserva porque "entregar" no es "modificar el inventario propio" (genera
-  // una comanda real, y General puede despachar de cualquier área). El panel
-  // en sí (y el FAB móvil que lo abre) ya NO se ocultan por completo: ambos
-  // modos comparten el mismo <aside>, así que ocultarlo entero le quitaría
-  // también Egreso Rápido a General.
+  // Gate genérico sobre auth.canEditInventory(): oculta la pestaña "Ingreso
+  // Rápido" del switcher para cualquier rol que no pueda modificar el
+  // inventario (deja solo Egreso Rápido, que sí conserva — "entregar" no es
+  // "modificar el inventario propio", genera una comanda real). Hasta el
+  // fix 2026-08-28, el coordinador de "General" era el único caso real
+  // (solo consulta+despacho); ahora administra su grupo completo igual que
+  // cualquier otro coordinador, así que esto queda como defensivo por si
+  // en el futuro vuelve a existir un rol de solo lectura. El panel en sí
+  // (y el FAB móvil que lo abre) ya NO se ocultan por completo: ambos modos
+  // comparten el mismo <aside>, así que ocultarlo entero le quitaría
+  // también Egreso Rápido a quien sea que caiga acá.
   const canEdit = auth.canEditInventory();
   const switchIngreso = document.getElementById('qa-switch-ingreso');
   const switcher = document.getElementById('qa-switcher');
@@ -219,7 +222,7 @@ let _contadorSyncCi = null;
 // signOut() primero, así que nunca dispara esta transición.
 let _wasLoggedIn = false;
 
-export function checkAuth() {
+export async function checkAuth() {
   const loginWall = document.getElementById('login-wall');
   const appShell = document.getElementById('app-shell');
 
@@ -244,6 +247,17 @@ export function checkAuth() {
 
     loginWall.style.display = 'none';
     appShell.style.display = 'block';
+
+    // Categorías: store.init() intentó cargarlas antes de que existiera
+    // sesión (RLS exige `to authenticated`, ver supabase/new-project-
+    // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
+    // hay un access_token real, y ANTES del bloque de abajo: resetIngreso
+    // Rapido() recarga también el catálogo compartido de "usados por otros
+    // grupos" (ver ingresorapido.js#_loadCatalogCache), que depende de
+    // store.categories ya al día — si no, el mismo boot-antes-de-login que
+    // dejaba esa caché vacía para siempre se repetía en cada login.
+    if (freshLogin) { nav('resumen'); await store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
+
     // El panel de agregado rápido se pinta en boot(), ANTES de que el usuario
     // cruce el muro de login: en esa primera sesión auth.name() todavía está
     // vacío, así que el nombre del contador se quedaba en blanco y TODO lo que
@@ -259,11 +273,6 @@ export function checkAuth() {
         resetIngresoRapido();
       }
     }
-    // Categorías: store.init() intentó cargarlas antes de que existiera
-    // sesión (RLS exige `to authenticated`, ver supabase/new-project-
-    // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
-    // hay un access_token real.
-    if (freshLogin) { nav('resumen'); store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
     applyRBAC();
     // Recalcula qué insumos puede ver esta cuenta (coordinador ↔ su área,
     // ver store.visibleItems()) sin esperar a que el usuario cambie de

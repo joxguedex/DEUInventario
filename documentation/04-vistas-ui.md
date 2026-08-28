@@ -41,8 +41,15 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
 - Buscador (debounce 110ms) → sugerencias (top 8, coincidencia de prefijo
   primero, de MI grupo) + hasta 5 sugerencias "usados por otros grupos"
   (catálogo compartido — `_loadCatalogCache()`, productos de mis
-  categorías que otro grupo ya cuenta y el mío todavía no) + un botón
-  "Crear '<texto>'" al final.
+  categorías que otro grupo ya cuenta y el mío todavía no), **antes** del
+  botón "Crear '<texto>'" al final.
+  `_loadCatalogCache()` corría UNA sola vez, en `renderIngresoRapido()`
+  dentro de `boot()` — casi siempre ANTES de que existiera sesión (RLS de
+  `products` exige `authenticated`), así que la caché quedaba vacía para
+  siempre y esta sección nunca aparecía (fix 2026-08-28). Ahora también se
+  recarga desde `resetIngresoRapido()`, que `app.js#checkAuth()` llama tras
+  un login fresco (ya con `store.categories` al día) y
+  `app.js#_onGrupoChange()` llama al cambiar de grupo.
 - **Insumo existente (mi grupo)**: total actual + input de cantidad +
   "Sumar" → `store.registrar(id, n, {origen:'ingreso'})`.
 - **Sugerencia de otro grupo**: abre el mismo formulario de "insumo nuevo"
@@ -253,9 +260,14 @@ Separa dos cosas que antes eran un solo paso:
    sola anon/authenticated key.
 
 **Alta** (`#vol-form`): cédula, nombre, apellido, teléfono, correo,
-contraseña, área — un solo submit hace `create_person` (RPC) seguido de
+contraseña — un solo submit hace `create_person` (RPC) seguido de
 `grant_login` (Edge Function; rol siempre `coordinador`, un admin nuevo se
-crea directo contra la base).
+crea directo contra la base). El campo Área (`#vol-area-field`) está
+**oculto a propósito** (fix 2026-08-28): el `<select>` sigue en el DOM con
+`'general'` como primera opción, así que se manda esa por defecto sin que
+nadie la elija — ver `documentation/05-autenticacion.md#gestión-de-usuarios`
+para el porqué (`canEditInventory()` ahora administra igual que cualquier
+coordinador).
 
 **Edición** (`#vol-edit-modal`, `window.editVolunteer(ci)`) — edita **toda**
 la información de un usuario existente: nombre, apellido, **cédula**,

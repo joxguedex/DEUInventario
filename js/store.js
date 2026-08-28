@@ -265,8 +265,8 @@ export const store = {
   // completo de su grupo sin restricción. El coordinador del área "General"
   // (auth.isGeneral()) también ve el catálogo completo sin restricción,
   // igual que admin — no tiene ítems propios (no es una categoría real),
-  // solo consulta el inventario de todas las demás áreas (nunca lo edita,
-  // ver auth.js#canEditInventory()). Un super_admin sin grupo elegido ve
+  // y administra el inventario de todas las demás áreas igual que admin
+  // (ver auth.js#canEditInventory()). Un super_admin sin grupo elegido ve
   // TODOS los grupos a la vez (una fila por cada conteo, ver item.grupoId);
   // si eligió uno puntual en el switcher, se filtra acá del lado del cliente.
   visibleItems() {

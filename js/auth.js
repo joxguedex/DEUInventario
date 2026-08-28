@@ -119,11 +119,17 @@ export const auth = {
   isSuperAdmin()  { return this.role() === 'super_admin'; },
   hasAdminRights() { return this.isAdmin() || this.isSuperAdmin(); },
   isCoordinador() { return this.role() === 'coordinador'; },
-  // Coordinador del área especial "general": sin categoría propia, consulta
-  // el catálogo completo de su grupo pero no puede modificarlo — ver
-  // canEditInventory() y store.js#visibleItems().
+  // Coordinador del área especial "general": sin categoría propia, ve y
+  // administra el catálogo completo de su grupo (todas las categorías, no
+  // solo una) — ver store.js#visibleItems(). Hasta el fix 2026-08-28 era
+  // de solo consulta+despacho; dejó de serlo porque "Área" ahora se oculta
+  // al crear usuarios (ver views/voluntarios.js) y todos se crean con esta
+  // área por defecto — de seguir siendo de solo lectura, un usuario nuevo
+  // no podría hacer nada con el inventario. can_access_category() en el
+  // servidor (sibex.can_access_category) ya le daba acceso completo a
+  // "general" desde antes; esto solo alinea el gate del cliente con eso.
   isGeneral()     { return this.isCoordinador() && this.area() === 'general'; },
-  canEditInventory() { return this.hasAdminRights() || (this.isCoordinador() && !this.isGeneral()); },
+  canEditInventory() { return this.hasAdminRights() || this.isCoordinador(); },
 
   // Cualquier sesión con rol admin/coordinador/super_admin tiene acceso —
   // ese rol solo lo fija la Edge Function (manage-users) o, para

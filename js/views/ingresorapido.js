@@ -74,7 +74,12 @@ export function renderIngresoRapido(shellEl, opts = {}) {
 
 // Cierra el panel a estado buscador (usado al cerrar la hoja móvil) y
 // refresca el pie (nombre del contador puede haber cambiado, ver app.js).
-export function resetIngresoRapido() { _sel = null; _new = null; _paint(); _paintFoot(); }
+// También recarga el catálogo compartido (_loadCatalogCache): app.js la
+// llama tras un login fresco (store.categories recién quedó al día — antes
+// _loadCatalogCache() solo corría UNA vez en boot(), casi siempre ANTES de
+// que hubiera sesión, y la caché de "usados por otros grupos" se quedaba
+// vacía para siempre) y tras cambiar de grupo (categorías distintas).
+export function resetIngresoRapido() { _sel = null; _new = null; _paint(); _paintFoot(); _loadCatalogCache(); }
 
 function _head() {
   return `

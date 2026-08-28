@@ -23,7 +23,7 @@ Desde la migración multi-tenant (grupos de extensión, ver
 | `super_admin` | Ve/administra **todos** los grupos de extensión (selector de grupo en la barra superior, `#grupo-switch`/`#grupo-switch-m`, exclusivo de este rol) y la pestaña **"Grupos"** (alta/gestión de grupos, ver [04-vistas-ui.md](./04-vistas-ui.md#viewsgruposjs--grupos-de-extensión-super-admin-only)). Fuera de eso, tiene el mismo alcance que `admin` **dentro del grupo que esté mirando** — incluida la pestaña Usuarios y editar el inventario. |
 | `admin` | Completo dentro de **su propio grupo** de extensión, incluida la pestaña Usuarios (crear/editar/revocar cualquier cuenta no-admin de ese grupo) y Categorías/Respaldos. Sin acceso a "Grupos" ni al selector de grupo — no tiene otro grupo que elegir. |
 | `coordinador` con área = una categoría real | Completo pero **recortado a su propia categoría** en Insumos/Ingreso Rápido/Historial/Resumen (`store.visibleItems()`). Sin acceso a Usuarios/Grupos/Categorías/Respaldos. |
-| `coordinador` con área `'general'` | **Solo consulta**: ve el catálogo/Historial/Resumen **completos, sin filtrar** (mismo alcance que admin), pero no puede sumar/restar/crear/eliminar insumos ni borrar registros de Historial (`auth.canEditInventory()` es `false`). Sí puede usar Egreso Rápido con el catálogo completo. |
+| `coordinador` con área `'general'` | Igual que `admin` en la práctica: ve y **administra** el catálogo/Historial/Resumen **completos, sin filtrar** (`auth.canEditInventory()` es `true`, fix 2026-08-28 — antes era de solo consulta). Sin acceso a Usuarios/Grupos/Categorías/Respaldos, a diferencia de `admin`. Área por defecto de todo usuario nuevo (ver §Gestión de usuarios). |
 | Cualquier cuenta sin `role` en `app_metadata` | **Denegado por completo** (`hasPlatformAccess()` es `false`). |
 
 `js/auth.js` expone:
@@ -40,10 +40,13 @@ Desde la migración multi-tenant (grupos de extensión, ver
   Grupos, exclusivo de super_admin.
 - `isCoordinador()`.
 - **`isGeneral()`**: `isCoordinador() && area() === 'general'`.
-- **`canEditInventory()`**: `hasAdminRights() || (isCoordinador() &&
-  !isGeneral())` — el único chequeo que gatea cada acción que MODIFICA el
-  inventario; todo lo demás (consulta) usa `hasPlatformAccess()`/
-  `visibleItems()` sin distinguir "general" de un coordinador normal.
+- **`canEditInventory()`**: `hasAdminRights() || isCoordinador()` (fix
+  2026-08-28 — antes excluía a `isGeneral()`) — el único chequeo que gatea
+  cada acción que MODIFICA el inventario; todo lo demás (consulta) usa
+  `hasPlatformAccess()`/`visibleItems()` sin distinguir "general" de un
+  coordinador normal. Hoy equivale a `hasPlatformAccess()` (todo rol con
+  acceso a la plataforma puede editar) — se mantiene como chequeo aparte
+  por si en el futuro vuelve a existir un rol de solo lectura.
 - **`hasPlatformAccess()`**: `hasAdminRights() || isCoordinador()` — único
   chequeo de acceso a la plataforma.
 - `authHeaders(extra={})` — `{apikey, Authorization: 'Bearer <access_token>',
@@ -107,9 +110,11 @@ haya quedado abierta de una sesión anterior en el mismo dispositivo).
   en desktop siguen siendo dos `tn-item` separados.
 - **"Despachos"** se oculta para todos (feature dormida, ver
   [04-vistas-ui.md](./04-vistas-ui.md)).
-- El coordinador de "general" pierde la pestaña "Ingreso Rápido" del
-  switcher (fuerza modo Egreso) — consultar sí, editar el inventario
-  propio no aplica (no tiene categoría propia).
+- El chequeo de `auth.canEditInventory()` que oculta la pestaña "Ingreso
+  Rápido" del switcher (fuerza modo Egreso) queda defensivo desde el fix
+  2026-08-28: el coordinador de "general" era el único caso real que
+  fallaba esa condición, y ahora administra igual que cualquier otro
+  coordinador (ver tabla de roles arriba).
 
 Ver el detalle completo en
 [02-arquitectura-frontend.md](./02-arquitectura-frontend.md#rbac-de-navegación-applyrbac).
@@ -142,6 +147,16 @@ Resumen del reparto entre RPC normal y Edge Function:
 | Activar/desactivar | Edge Function `manage-users#set_active` | Baneo nativo de Auth (`banned_until`). |
 | Revocar acceso | Edge Function `manage-users#revoke_access` | Limpia `app_metadata` + cierra sesión activa (`signOut` scope `'global'`). |
 | Revocar por área (al borrar una categoría) | Edge Function `manage-users#revoke_by_area` | Llamado por `delete_category` indirectamente (ver abajo) — invalida sesiones de golpe. |
+
+**Área oculta al crear (fix 2026-08-28)**: el formulario de "Otorgar
+acceso" ya no muestra el `<select>` de Área — todo usuario nuevo se crea
+con área `'general'` (primera opción de `_areaOptionsHTML()`, queda
+seleccionada sin tocar nada; el campo sigue en el DOM, solo oculto, por si
+se reactiva más adelante). Es lo que hace necesario que `'general'`
+administre igual que cualquier otro coordinador (ver `canEditInventory()`
+arriba) — de seguir siendo de solo lectura, ningún usuario nuevo podría
+tocar el inventario. El modal de **editar** un usuario existente sí
+conserva el selector de Área intacto.
 
 `requireAdmin()` en la Edge Function valida el JWT del que llama contra
 `app_metadata.role === 'admin'` en cada request — nunca confía en un campo

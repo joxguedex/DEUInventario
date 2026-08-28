@@ -181,7 +181,7 @@ export function renderVoluntarios(container) {
               <input type="password" id="vol-pass" required minlength="6" placeholder="Mínimo 6 caracteres">
             </div>
           </div>
-          <div class="adm-field" id="vol-area-field">
+          <div class="adm-field" id="vol-area-field" style="display:none">
             <label>Área</label>
             <select id="vol-area" style="width:100%; padding:12px; border:1.5px solid var(--bdr); border-radius:var(--r-sm); background:var(--s2);">
               ${_areaOptionsHTML()}
@@ -252,12 +252,14 @@ export function renderVoluntarios(container) {
       </div>
     </div>`;
 
-  // El rol "Administrador del grupo" no usa área (esa es cosa de
-  // coordinador) — se oculta el campo en vez de dejarlo mandar un valor sin
-  // sentido (ver grantLogin en la Edge Function, que ya lo ignora igual).
-  container.querySelector('#vol-role')?.addEventListener('change', (e) => {
-    container.querySelector('#vol-area-field').style.display = e.target.value === 'admin' ? 'none' : '';
-  });
+  // Selección de Área oculta por el momento al crear (fix 2026-08-28): todo
+  // usuario nuevo se crea con área "general" (primera opción de
+  // _areaOptionsHTML, queda seleccionada por defecto sin tocar nada) — ver
+  // auth.js#canEditInventory(), que ahora incluye a "general" para que
+  // pueda administrar todas las categorías de su grupo (antes era
+  // consulta+despacho solamente). El `<select>` sigue existiendo oculto
+  // (no se borra el flujo, por si se reactiva más adelante) y su valor
+  // igual se manda en el submit — grantLogin ya lo ignora para rol admin.
 
   // Cambiar de grupo en el formulario recarga las categorías de ESE grupo
   // para el selector de Área (puede ser distinto del grupo elegido en la
