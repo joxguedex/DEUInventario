@@ -59,8 +59,19 @@ async function _loadCatalogCache() {
       `${SUPABASE_URL}/rest/v1/products?category_id=in.(${ids.join(',')})&deleted_at=is.null&select=client_id,name,unidad,category_id,umbral,umbral_max`,
       { headers: auth.authHeaders({ 'Accept-Profile': DB_SCHEMA }) }
     );
-    if (res.ok) _catalogCache = await res.json();
-  } catch { /* sin red: se queda con lo último cargado */ }
+    if (res.ok) {
+      _catalogCache = await res.json();
+    } else {
+      // Antes esto fallaba en silencio (sin log): la sugerencia "usados por
+      // otros grupos" simplemente no aparecía y no había forma de saber por
+      // qué desde la consola. Loguear el status/cuerpo acá es lo mínimo
+      // para poder diagnosticar un 4xx/5xx real (RLS, columna, etc.) en vez
+      // de adivinar.
+      console.error('[ingresorapido] _loadCatalogCache: HTTP', res.status, await res.text().catch(() => ''));
+    }
+  } catch (err) {
+    console.error('[ingresorapido] _loadCatalogCache:', err);
+  }
 }
 
 // sync.onChange dispara en cada ciclo (automático cada 30s, o antes por
