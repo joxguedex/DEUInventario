@@ -28,22 +28,28 @@ Catálogo completo, filtrable por búsqueda y por categoría.
   `(producto, grupo)`, no un producto — cuando el visor ve más de un grupo
   a la vez (super_admin sin uno elegido en la barra superior) cada tarjeta
   agrega la etiqueta del grupo dueño de ese conteo.
-  **Tarjeta agregada** (`aggregateCardHtml()`, fix 2026-08-30): antepuesta
-  al grupo de tarjetas de cada producto que tenga fila en 2+ grupos
-  visibles (`store.siblings()`) — de solo lectura (sin `.ic-controls`/
-  `.ic-quickadd`, no hay una sola fila de `inventory` a la que aplicarle un
-  cambio), estilo distinguible (`.inv-card-agg`, borde punteado), con el
-  total sumado entre todos los grupos y el estado/color evaluados contra
-  ESE total (mismo `umbral`/`umbral_max`, que viven en `products` — son
-  iguales en todas las filas del producto). `data-id="agg:<productClientId>"`
-  la distingue de una tarjeta real en `syncView()`/`refreshItem()`
-  (`data-agg="1"`) — se repinta tras cualquier cambio a una de sus filas
-  (`_refreshAggCard()`), pero solo si ya estaba en el DOM: si un producto
-  recién pasa a tener 2+ grupos en la sesión, la tarjeta aparece en el
-  próximo `renderList()` completo (cambio de pestaña/búsqueda/categoría),
-  no a mitad de grilla. "Eliminar" ya no borra el producto: solo quita
-  (borrado lógico) el conteo de TU grupo — el producto y el conteo de otros
-  grupos quedan intactos, y volver a agregarlo lo revive.
+  **Tarjeta agregada** (`aggregateCardHtml()`, fix 2026-08-30): cada
+  producto con fila en 2+ grupos visibles (`store.siblings()`) se COLAPSA
+  en una sola tarjeta — de solo lectura (sin `.ic-controls`/`.ic-quickadd`,
+  no hay una sola fila de `inventory` a la que aplicarle un cambio), estilo
+  distinguible (`.inv-card-agg`, borde punteado), con el total sumado entre
+  todos los grupos y el estado/color evaluados contra ESE total (mismo
+  `umbral`/`umbral_max`, que viven en `products` — son iguales en todas las
+  filas del producto). `data-id="agg:<productClientId>"` la distingue de
+  una tarjeta real en `syncView()`/`refreshItem()` (`data-agg="1"`) — se
+  repinta tras cualquier cambio a una de sus filas (`_refreshAggCard()`),
+  pero solo si ya estaba en el DOM: si un producto recién pasa a tener 2+
+  grupos en la sesión, la tarjeta aparece en el próximo `renderList()`
+  completo (cambio de pestaña/búsqueda/categoría), no a mitad de grilla.
+  **Desplegable** (fix 2026-08-30b, `_expandedProducts`): tocar la tarjeta
+  agregada (`data-action="toggle-agg"`, teclado Enter/Espacio también)
+  muestra/oculta detrás las tarjetas reales de cada grupo — colapsado por
+  defecto, así un producto compartido por N grupos no ocupa N+1 tarjetas de
+  entrada. El estado desplegado/colapsado vive en memoria por sesión (no
+  persiste), mismo criterio que `_expandedDays` en `registro.js`.
+  "Eliminar" ya no borra el producto: solo quita (borrado lógico) el conteo
+  de TU grupo — el producto y el conteo de otros grupos quedan intactos, y
+  volver a agregarlo lo revive.
 
 ## `views/ingresorapido.js` — Ingreso Rápido
 

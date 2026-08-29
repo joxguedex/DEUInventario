@@ -39,6 +39,12 @@ let _query = '';
 let _cat   = 'todos';
 let _root  = null;
 
+// Productos (productClientId) cuya tarjeta agregada está desplegada — ver
+// aggregateCardHtml()/_renderCards(). Solo aplica en la vista de
+// super_admin sin filtrar por grupo; se queda en memoria durante la
+// sesión (no persiste), mismo criterio que _expandedDays en registro.js.
+let _expandedProducts = new Set();
+
 // Categorías disponibles como pestaña de filtro: todas (admin/General) o
 // solo la propia (coordinador con área) — mismo criterio que
 // ingresorapido.js#_catOptions.
@@ -154,11 +160,11 @@ export function renderList() {
 }
 
 // super_admin viendo "Todos los grupos" (store.viewingGrupoId == null):
-// antepone una tarjeta agregada de solo lectura (aggregateCardHtml) al
-// grupo de tarjetas por-grupo de cada producto con conteo en 2+ grupos —
-// "una tarjeta adicional... que muestre el total acumulado" (pedido
-// explícito, fix 2026-08-30). store.siblings() da el conteo REAL de
-// grupos del producto, sin acotar por el filtro de búsqueda/categoría
+// cada producto con conteo en 2+ grupos se colapsa en su tarjeta agregada
+// (aggregateCardHtml) — las tarjetas por-grupo detrás solo se pintan si
+// ese producto está en _expandedProducts (se despliegan tocando la
+// tarjeta agregada, ver _onGridClick). store.siblings() da el conteo REAL
+// de grupos del producto, sin acotar por el filtro de búsqueda/categoría
 // activo (los siblings comparten nombre/categoría, así que en la práctica
 // nunca quedan divididos por ese filtro).
 function _renderCards(list) {
@@ -168,12 +174,19 @@ function _renderCards(list) {
   const seen = new Set();
   const parts = [];
   for (const it of list) {
-    if (!seen.has(it.productClientId)) {
-      seen.add(it.productClientId);
-      const sibs = store.siblings(it.productClientId);
-      if (sibs.length > 1) parts.push(aggregateCardHtml(it.productClientId, sibs));
+    const pcid = it.productClientId;
+    if (seen.has(pcid)) continue; // ya resuelto la primera vez que apareció, ver abajo
+    seen.add(pcid);
+
+    const sibs = store.siblings(pcid);
+    if (sibs.length <= 1) { parts.push(cardHtml(it)); continue; }
+
+    parts.push(aggregateCardHtml(pcid, sibs));
+    if (_expandedProducts.has(pcid)) {
+      // Puede haber más de una fila de este producto en `list` (una por
+      // grupo) — pintarlas todas, no solo `it`.
+      for (const sib of list) if (sib.productClientId === pcid) parts.push(cardHtml(sib));
     }
-    parts.push(cardHtml(it));
   }
   return parts.join('');
 }
@@ -244,16 +257,25 @@ function _aggId(productClientId) { return `agg:${productClientId}`; }
 // evaluar el estado contra el total agregado es válido igual que contra
 // una sola fila. Sin controles +/−/cantidad recibida: no hay una única
 // fila de inventory a la que aplicarle un cambio.
+// Desplegable (fix 2026-08-30b): tocarla muestra/oculta las tarjetas por
+// grupo detrás (ver _renderCards()/_onGridClick, data-action="toggle-agg")
+// — colapsada por defecto para no duplicar N+1 tarjetas por cada producto
+// compartido.
 function aggregateCardHtml(productClientId, sibs) {
   const ref = sibs[0];
   const total = sibs.reduce((s, x) => s + (x.cantidad || 0), 0);
   const { s, fc, tt, tc, umbralTxt } = _statusParts({ ...ref, cantidad: total });
+  const expanded = _expandedProducts.has(productClientId);
 
   return `
-    <div class="inv-card inv-card-agg status-${s}" data-id="${escHtml(_aggId(productClientId))}" data-agg="1">
+    <div class="inv-card inv-card-agg status-${s}" data-id="${escHtml(_aggId(productClientId))}" data-agg="1"
+         data-action="toggle-agg" role="button" tabindex="0" aria-expanded="${expanded}">
       <div class="ic-header">
         <div>
-          <div class="ic-name">${escHtml(ref.nombre)}</div>
+          <div class="ic-name">
+            <svg class="ic-agg-chev${expanded ? ' open' : ''}" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            ${escHtml(ref.nombre)}
+          </div>
           <div class="ic-cat">${escHtml(catLabel(ref.categoria))} · <span class="tag tag-gray" style="padding:1px 6px">Todos los grupos (${sibs.length})</span></div>
         </div>
         <span class="tag ${tc}">${tt}</span>
@@ -263,6 +285,7 @@ function aggregateCardHtml(productClientId, sibs) {
       <div class="ic-prog-row">
         <div class="prog"><div class="prog-fill ${fc}" style="width:${iPct({ ...ref, cantidad: total })}%"></div></div>
       </div>
+      <div class="ic-agg-hint">${expanded ? 'Ocultar desglose por grupo' : 'Ver desglose por grupo'}</div>
     </div>`;
 }
 
@@ -337,10 +360,23 @@ async function _saveQty(card, id, val) {
   if (it) { _patchCard(card, it); _refreshAggCard(it.productClientId); }
 }
 
+// Despliega/oculta las tarjetas por grupo de un producto detrás de su
+// tarjeta agregada (_expandedProducts) — requiere reconstruir la grilla
+// entera (inserta/quita varias tarjetas), a diferencia de _refreshAggCard
+// (patch puntual de una sola tarjeta ya existente).
+function _toggleAgg(productClientId) {
+  if (_expandedProducts.has(productClientId)) _expandedProducts.delete(productClientId);
+  else _expandedProducts.add(productClientId);
+  renderList();
+}
+
 function _onGridClick(e) {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const { action, id } = btn.dataset;
+
+  if (action === 'toggle-agg') { _toggleAgg(id.slice(4)); return; } // id = "agg:<productClientId>"
+
   const card = btn.closest('.inv-card');
 
   if (action === 'dec' || action === 'inc') {
@@ -382,6 +418,13 @@ function _onGridInput(e) {
 }
 
 function _onGridKeydown(e) {
+  const agg = e.target.closest('[data-action="toggle-agg"]');
+  if (agg && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    _toggleAgg(agg.dataset.id.slice(4));
+    return;
+  }
+
   const inp = e.target.closest('.qty-input');
   if (!inp || e.key !== 'Enter') return;
   e.preventDefault();

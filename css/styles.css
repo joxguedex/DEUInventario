@@ -303,7 +303,12 @@ input[type=number]{-moz-appearance:textfield}
    producto (super_admin viendo "Todos los grupos", ver conteo.js#
    aggregateCardHtml) — borde punteado + fondo apenas teñido para
    distinguirla de un conteo real de un grupo puntual. */
-.inv-card-agg{border-style:dashed;background:color-mix(in srgb, var(--ic-clr,var(--bdr)) 5%, var(--surface))}
+.inv-card-agg{border-style:dashed;background:color-mix(in srgb, var(--ic-clr,var(--bdr)) 5%, var(--surface));cursor:pointer}
+.inv-card-agg:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.inv-card-agg .ic-name{display:flex;align-items:center;gap:5px}
+.ic-agg-chev{flex-shrink:0;transition:transform .15s ease;opacity:.7}
+.ic-agg-chev.open{transform:rotate(90deg)}
+.ic-agg-hint{font-size:10.5px;font-weight:700;letter-spacing:.2px;color:var(--t3);text-align:center;margin-top:10px}
 .ic-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px}
 .ic-name{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--t1);line-height:1.3}
 .ic-cat{font-size:11px;color:var(--t4);margin-top:2px}
