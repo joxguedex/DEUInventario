@@ -299,6 +299,11 @@ input[type=number]{-moz-appearance:textfield}
 .inv-card.status-ok     {--ic-clr:var(--green)}
 .inv-card.status-exceso {--ic-clr:var(--blue)}
 .inv-card.status-none   {--ic-clr:var(--t4)}
+/* Tarjeta adicional de solo lectura con el total entre grupos de un mismo
+   producto (super_admin viendo "Todos los grupos", ver conteo.js#
+   aggregateCardHtml) — borde punteado + fondo apenas teñido para
+   distinguirla de un conteo real de un grupo puntual. */
+.inv-card-agg{border-style:dashed;background:color-mix(in srgb, var(--ic-clr,var(--bdr)) 5%, var(--surface))}
 .ic-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px}
 .ic-name{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:var(--t1);line-height:1.3}
 .ic-cat{font-size:11px;color:var(--t4);margin-top:2px}

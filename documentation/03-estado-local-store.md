@@ -162,6 +162,14 @@ corresponde (offline-first: la UI nunca espera a la red).
   **`grouped()`**, **`csv()`** — métricas/agrupaciones derivadas, todas
   sobre `visibleItems()`. `statsByGrupo()` es nuevo (Resumen: unidades
   totales por grupo, solo relevante cuando la vista mezcla más de uno).
+  **`statsByCat()`** (fix 2026-08-30): `total`/`contados` cuentan cada
+  PRODUCTO una sola vez por categoría, nunca una vez por grupo que lo
+  tenga — antes, viendo "Todos los grupos" como super_admin, un insumo
+  compartido por 3 grupos sumaba 3 al conteo de "insumos" de Resumen
+  (`views/resumen.js`, panel "Insumos por categoría"). `unidades` sigue
+  sumando entre grupos (es el total real de stock de la categoría, no un
+  artefacto de duplicación). Para admin/coordinador (`visibleItems()` ya
+  acotado a un solo grupo) el resultado no cambió.
 - **`visibleItems()`** — filtro central de RBAC de datos: un coordinador de
   área ve solo `items` cuya `categoria` coincide con `auth.area()`; admin y
   el coordinador de área `general` ven todo su grupo; un super_admin sin

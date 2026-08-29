@@ -150,15 +150,42 @@ export function renderList() {
     return;
   }
 
-  grid.innerHTML = list.map(cardHtml).join('');
+  grid.innerHTML = _renderCards(list);
+}
+
+// super_admin viendo "Todos los grupos" (store.viewingGrupoId == null):
+// antepone una tarjeta agregada de solo lectura (aggregateCardHtml) al
+// grupo de tarjetas por-grupo de cada producto con conteo en 2+ grupos —
+// "una tarjeta adicional... que muestre el total acumulado" (pedido
+// explícito, fix 2026-08-30). store.siblings() da el conteo REAL de
+// grupos del producto, sin acotar por el filtro de búsqueda/categoría
+// activo (los siblings comparten nombre/categoría, así que en la práctica
+// nunca quedan divididos por ese filtro).
+function _renderCards(list) {
+  const showGrupo = auth.isSuperAdmin() && store.viewingGrupoId == null;
+  if (!showGrupo) return list.map(cardHtml).join('');
+
+  const seen = new Set();
+  const parts = [];
+  for (const it of list) {
+    if (!seen.has(it.productClientId)) {
+      seen.add(it.productClientId);
+      const sibs = store.siblings(it.productClientId);
+      if (sibs.length > 1) parts.push(aggregateCardHtml(it.productClientId, sibs));
+    }
+    parts.push(cardHtml(it));
+  }
+  return parts.join('');
 }
 
 function _boxLg() {
   return `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`;
 }
 
-// ── Tarjeta de insumo (misma estética que UCVAcopio/js/views/inventory.js) ──
-function cardHtml(it) {
+// Estado/color/etiqueta de umbral — compartido entre cardHtml() y
+// aggregateCardHtml() (la tarjeta agregada evalúa lo mismo contra el total
+// sumado en vez de la cantidad de una sola fila).
+function _statusParts(it) {
   const s  = iStatus(it);
   const fc = s === 'critico' ? 'fill-red' : s === 'bajo' ? 'fill-amber' : s === 'exceso' ? 'fill-blue' : s === 'none' ? 'fill-gray' : 'fill-green';
   const tt = s === 'critico' ? 'Crítico' : s === 'bajo' ? 'Bajo' : s === 'exceso' ? 'Exceso' : s === 'none' ? 'No necesario' : 'OK';
@@ -167,14 +194,18 @@ function cardHtml(it) {
   if (it.umbral > 0) umbralPartes.push(`alerta &lt; ${it.umbral}`);
   if (it.umbral_max) umbralPartes.push(`exceso &gt; ${it.umbral_max}`);
   const umbralTxt = umbralPartes.length ? umbralPartes.join(' · ') : 'no necesario';
+  return { s, fc, tt, tc, umbralTxt };
+}
+
+// ── Tarjeta de insumo (misma estética que UCVAcopio/js/views/inventory.js) ──
+function cardHtml(it) {
+  const { s, fc, tt, tc, umbralTxt } = _statusParts(it);
   const id = escHtml(it.id);
 
-  // Catálogo compartido entre grupos: si el visor puede ver más de un grupo
-  // a la vez (super_admin sin uno elegido) se agrega la etiqueta de grupo y,
-  // cuando el mismo producto tiene conteo en más de uno, el total sumado.
+  // Etiqueta de grupo: solo tiene sentido si el visor puede ver más de uno
+  // a la vez (super_admin sin uno elegido, ver aggregateCardHtml() para el
+  // total acumulado entre grupos del mismo producto).
   const showGrupo = auth.isSuperAdmin() && store.viewingGrupoId == null;
-  const sibs = showGrupo ? store.siblings(it.productClientId) : [it];
-  const total = sibs.reduce((s, x) => s + (x.cantidad || 0), 0);
 
   return `
     <div class="inv-card status-${s}" data-id="${id}">
@@ -186,7 +217,6 @@ function cardHtml(it) {
         <span class="tag ${tc}">${tt}</span>
       </div>
       <div class="ic-qty">${it.cantidad}</div>
-      ${showGrupo && sibs.length > 1 ? `<div class="ic-unit" style="opacity:.8">Total entre ${sibs.length} grupos: <strong>${total}</strong></div>` : ''}
       <div class="ic-unit">${escHtml(it.unidad)} · ${umbralTxt}</div>
       <div class="ic-prog-row">
         <div class="prog"><div class="prog-fill ${fc}" style="width:${iPct(it)}%"></div></div>
@@ -202,6 +232,37 @@ function cardHtml(it) {
         <input type="number" class="ic-qadd-inp" inputmode="numeric" min="1" placeholder="Cantidad recibida…" data-qadd-id="${id}">
         <button class="ic-qadd-btn" data-action="add" data-id="${id}">+ Sumar</button>
       </div>` : ''}
+    </div>`;
+}
+
+function _aggId(productClientId) { return `agg:${productClientId}`; }
+
+// Tarjeta ADICIONAL de solo lectura, una por producto con conteo en 2+
+// grupos (pedido explícito, fix 2026-08-30) — el total acumulado entre
+// todos los grupos que lo cuentan. umbral/umbral_max son del PRODUCTO, no
+// del conteo (viven en products, iguales en todos los sibs), así que
+// evaluar el estado contra el total agregado es válido igual que contra
+// una sola fila. Sin controles +/−/cantidad recibida: no hay una única
+// fila de inventory a la que aplicarle un cambio.
+function aggregateCardHtml(productClientId, sibs) {
+  const ref = sibs[0];
+  const total = sibs.reduce((s, x) => s + (x.cantidad || 0), 0);
+  const { s, fc, tt, tc, umbralTxt } = _statusParts({ ...ref, cantidad: total });
+
+  return `
+    <div class="inv-card inv-card-agg status-${s}" data-id="${escHtml(_aggId(productClientId))}" data-agg="1">
+      <div class="ic-header">
+        <div>
+          <div class="ic-name">${escHtml(ref.nombre)}</div>
+          <div class="ic-cat">${escHtml(catLabel(ref.categoria))} · <span class="tag tag-gray" style="padding:1px 6px">Todos los grupos (${sibs.length})</span></div>
+        </div>
+        <span class="tag ${tc}">${tt}</span>
+      </div>
+      <div class="ic-qty">${total}</div>
+      <div class="ic-unit">${escHtml(ref.unidad)} · ${umbralTxt}</div>
+      <div class="ic-prog-row">
+        <div class="prog"><div class="prog-fill ${fc}" style="width:${iPct({ ...ref, cantidad: total })}%"></div></div>
+      </div>
     </div>`;
 }
 
@@ -228,8 +289,17 @@ export function syncView() {
   const cards = _root.querySelectorAll('.inv-card[data-id]');
   for (const card of cards) {
     if (card.contains(document.activeElement)) continue; // el usuario está escribiendo ahí
+    if (card.dataset.agg) continue; // se refrescan aparte, más abajo (no hay item real que buscar con store.find)
     const it = store.find(card.dataset.id);
     if (it) _patchCard(card, it);
+  }
+  if (auth.isSuperAdmin() && store.viewingGrupoId == null) {
+    const seen = new Set();
+    for (const it of store.visibleItems()) {
+      if (seen.has(it.productClientId)) continue;
+      seen.add(it.productClientId);
+      _refreshAggCard(it.productClientId);
+    }
   }
 }
 
@@ -240,13 +310,31 @@ export function refreshItem(id) {
   if (!it) return;
   const card = _root.querySelector(`.inv-card[data-id="${CSS.escape(id)}"]`);
   if (card) _patchCard(card, it);
+  _refreshAggCard(it.productClientId);
+}
+
+// Repinta la tarjeta agregada (aggregateCardHtml) de un producto si ya
+// estaba en el DOM — llamada tras cualquier cambio a una de sus filas por
+// grupo, para que el total no quede desactualizado. Si el producto ya no
+// tiene 2+ grupos la quita; si TODAVÍA no existía (p.ej. un segundo grupo
+// recién se sumó a este producto en la sesión) no la inserta a mitad de
+// grilla — eso se refleja recién en el próximo renderList() completo.
+function _refreshAggCard(productClientId) {
+  if (!_root || !(auth.isSuperAdmin() && store.viewingGrupoId == null)) return;
+  const existing = _root.querySelector(`.inv-card[data-id="${CSS.escape(_aggId(productClientId))}"]`);
+  if (!existing) return;
+  const sibs = store.siblings(productClientId);
+  if (sibs.length <= 1) { existing.remove(); return; }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = aggregateCardHtml(productClientId, sibs);
+  existing.replaceWith(tmp.firstElementChild);
 }
 
 const _timers = new WeakMap();
 
 async function _saveQty(card, id, val) {
   const it = await store.setTotal(id, val);
-  if (it) _patchCard(card, it);
+  if (it) { _patchCard(card, it); _refreshAggCard(it.productClientId); }
 }
 
 function _onGridClick(e) {
@@ -274,6 +362,7 @@ function _onGridClick(e) {
       if (!it) return;
       toast.ok(`+${qty} ${it.nombre} · total ${it.cantidad}`);
       _patchCard(card, it);
+      _refreshAggCard(it.productClientId);
     })();
     return;
   }

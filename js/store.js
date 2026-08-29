@@ -554,13 +554,31 @@ export const store = {
     return { total, contados, pendientes: total - contados, unidades };
   },
 
+  // Cada PRODUCTO cuenta una sola vez por categoría, nunca una vez por
+  // grupo que lo tenga (fix 2026-08-30) — un catálogo compartido con el
+  // mismo insumo en 3 grupos no son "3 insumos", es 1. "unidades" sí suma
+  // entre grupos (el total real de stock de la categoría); "total"/
+  // "contados" cuentan productos distintos. Para admin/coordinador
+  // (visibleItems ya acotado a un solo grupo) el resultado es idéntico al
+  // de antes — el cambio solo se nota con super_admin viendo "Todos los
+  // grupos".
   statsByCat() {
-    const m = {};
+    const porCategoria = {};
     for (const i of this.visibleItems()) {
       if (i.deleted_at) continue;
-      (m[i.categoria] ||= { total: 0, contados: 0, unidades: 0 });
-      m[i.categoria].total++;
-      if (i.contado) { m[i.categoria].contados++; m[i.categoria].unidades += i.cantidad; }
+      const cat = (porCategoria[i.categoria] ||= new Map());
+      const p = cat.get(i.productClientId) || { contado: false, unidades: 0 };
+      p.contado = p.contado || i.contado;
+      if (i.contado) p.unidades += i.cantidad;
+      cat.set(i.productClientId, p);
+    }
+    const m = {};
+    for (const [cat, productos] of Object.entries(porCategoria)) {
+      const bucket = (m[cat] = { total: 0, contados: 0, unidades: 0 });
+      for (const p of productos.values()) {
+        bucket.total++;
+        if (p.contado) { bucket.contados++; bucket.unidades += p.unidades; }
+      }
     }
     return m;
   },
