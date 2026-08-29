@@ -14,7 +14,7 @@ import { db } from '../db.js';
 import { auth } from '../auth.js';
 import { SUPABASE_URL } from '../config.js';
 import { DB_SCHEMA } from '../env-config.js';
-import { openPanel as openAdminPanel } from './admin.js';
+import { openTimeMachine } from './admin.js';
 import { escHtml, normSearch, catIcon, catLabel, catColor } from '../helpers.js';
 import { toast } from '../components/toast.js';
 import { confirmDialog } from '../components/confirm.js';
@@ -406,7 +406,7 @@ function _wireAdminTools(el) {
   el.querySelector('#qa-refresh-local')?.addEventListener('click', _refreshLocal);
   el.querySelector('#qa-export-excel')?.addEventListener('click', _exportExcel);
   el.querySelector('#qa-import-excel')?.addEventListener('change', _importExcel);
-  el.querySelector('#qa-time-machine')?.addEventListener('click', openAdminPanel);
+  el.querySelector('#qa-time-machine')?.addEventListener('click', openTimeMachine);
 }
 
 async function _exportJSON() {

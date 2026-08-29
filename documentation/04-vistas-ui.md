@@ -100,16 +100,17 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
   cambiar de grupo (`app.js#_onGrupoChange` llama a `resetIngresoRapido()`).
 - **`openSheet()`/`closeSheet()`** — hoja inferior en móvil (clase `.open`
   + backdrop + `body.qa-lock`).
-- **Herramientas admin** (`.qa-admin-tools`, solo `auth.isAdmin()`, en el
-  pie compartido del panel):
+- **Herramientas admin** (`.qa-admin-tools`, `auth.hasAdminRights()` —
+  admin o super_admin, en el pie compartido del panel):
   - **Exportar JSON** — dump completo de IndexedDB.
   - **Refrescar local** — `sync.pullAll()` (re-pull completo).
   - **Exportar Excel** — `store.visibleItems()` no eliminados a `.xlsx`.
   - **Importar Excel** — lee un `.xlsx`/`.xls`/`.csv` (columnas
     Nombre+Cantidad requeridas), matchea categoría por nombre, confirma, y
     llama `store.addNuevo(...)` por fila.
-  - **Máquina del tiempo** — atajo directo al panel de respaldos de
-    `admin.js`.
+  - **Máquina del tiempo** — `admin.js#openTimeMachine()` (fix 2026-08-30:
+    antes abría el panel de cuenta completo, `openPanel()`, con los
+    respaldos mezclados adentro; ahora es su propio modal — ver más abajo).
 
 ## `views/egresorapido.js` — Egreso Rápido
 
@@ -375,7 +376,7 @@ si algún día hace falta un flujo de despacho por área.
 
 - **`renderLoginWall(container)`** — formulario **correo + contraseña**
   (`#adm-email`/`#adm-pass`), llama `auth.login(email, password)`.
-- **Panel** (botón de perfil, cualquier sesión):
+- **Panel** (`openPanel()`, botón de perfil, cualquier sesión):
   1. **"Mi perfil"** — nombre/apellido/teléfono propios, vía RPC
      `update_own_profile` (autoservicio, solo la fila del propio usuario).
      Cédula visible mostrada de solo lectura (no editable — solo un admin
@@ -383,16 +384,27 @@ si algún día hace falta un flujo de despacho por área.
   2. **"Cambiar contraseña"** — autoservicio, `auth.updatePassword()`
      (Supabase Auth: la sesión ya es prueba de identidad, no pide la
      contraseña actual).
-  3. **Admin-only — "Mi grupo de extensión"**: botón "Editar mi grupo" →
-     `openEditGrupoModal` (mismo modal compartido con `views/grupos.js`,
-     preescopado a `auth.grupo()`) — reemplaza a la vieja sección
-     "Categorías de insumos" (revisión "productos multigrupo",
-     2026-08-25): la gestión de categorías (crear/vincular/desvincular)
-     vive ahora ahí, no suelta en este panel.
-  4. **Admin-only — "Respaldos del conteo"**: lista de checkpoints
-     (`checkpoints.js`) con crear/restaurar/borrar, confirmación danger
-     para restaurar.
-  5. Cerrar sesión.
+  3. **Exclusivo de `auth.isAdmin()` — "Mi grupo de extensión"** (fix
+     2026-08-30: antes era cualquier `hasAdminRights()`, incluido
+     super_admin): botón "Editar mi grupo" → `openEditGrupoModal` (mismo
+     modal compartido con `views/grupos.js`, preescopado a `auth.grupo()`)
+     — reemplaza a la vieja sección "Categorías de insumos" (revisión
+     "productos multigrupo", 2026-08-25): la gestión de categorías (crear/
+     vincular/desvincular) vive ahora ahí, no suelta en este panel. Un
+     super_admin no "pertenece" a un único grupo (ve/administra todos, ya
+     tiene su propia pestaña "Grupos" para eso), así que la opción no
+     aplica.
+  4. Cerrar sesión.
+
+  Ya **no** incluye "Respaldos del conteo" (fix 2026-08-30) — se editaba la
+  sesión propia mezclado con una herramienta de recuperación de datos sin
+  relación. Ver `openTimeMachine()` más abajo.
+
+- **`openTimeMachine()`** — modal aparte con **"Respaldos del conteo"**:
+  lista de checkpoints (`checkpoints.js`) con crear/restaurar/borrar,
+  confirmación danger para restaurar. Alcanzable solo desde el botón
+  "Máquina del Tiempo" del pie de Ingreso Rápido (admin/super_admin, ver
+  `ingresorapido.js#_wireAdminTools`) — ya no desde el panel de cuenta.
 
 ### `openEditGrupoModal(grupo, { onChange })` — exportado, compartido
 

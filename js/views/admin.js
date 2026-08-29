@@ -128,13 +128,15 @@ export function renderLoginWall(container) {
 }
 
 // ── Panel de usuario (admin y coordinador) ──
-// Exportado también como acceso directo a "Máquina del Tiempo" desde el
-// panel de Ingreso Rápido (ver ingresorapido.js) — mismo panel completo que
-// abre el botón de cuenta, sin duplicar la sección de respaldos.
+// "Mi perfil" (nombre/apellido/teléfono), "Cambiar contraseña" y, para un
+// admin de grupo (no super_admin, ver más abajo), "Mi grupo de extensión".
+// Los respaldos del conteo YA NO viven acá (fix 2026-08-30): se editaba la
+// sesión propia mezclado con una herramienta de recuperación de datos sin
+// relación — ahora es un modal aparte, ver openTimeMachine() más abajo,
+// abierto solo desde el botón "Máquina del Tiempo" de Ingreso Rápido.
 export async function openPanel() {
   if (!auth.isLoggedIn()) return; // sin sesión, el botón no abre nada (el muro ya se muestra)
 
-  if (auth.hasAdminRights()) await checkpoints.load();
   const roleLabel = auth.isSuperAdmin() ? 'Super administrador'
     : auth.isAdmin() ? 'Administrador'
     : `Coordinador · ${auth.area() || ''}`;
@@ -204,36 +206,29 @@ export async function openPanel() {
         </form>
       </div>
 
-      ${auth.hasAdminRights() ? `
+      ${auth.isAdmin() ? `
       <div class="adm-sec">
         <div class="adm-sec-top">
           <span class="adm-sec-title">Mi grupo de extensión</span>
         </div>
         <div class="adm-note" style="margin:0 0 10px;">Nombre y categorías vinculadas de tu grupo — cada categoría es el "área" que puede tener un coordinador.</div>
         <button class="adm-btn" id="adm-editar-grupo">Editar mi grupo</button>
-      </div>
-
-      <div class="adm-sec">
-        <div class="adm-sec-top">
-          <span class="adm-sec-title">Respaldos del conteo</span>
-          <button class="adm-mini" id="adm-cp-new">+ Crear respaldo</button>
-        </div>
-        <div class="adm-cp-list" id="adm-cp-list"></div>
       </div>` : ''}
 
       <button class="adm-btn" id="adm-logout">Cerrar sesión</button>
     </div>`);
 
-  if (auth.hasAdminRights()) {
-    _paintCpList(ov);
+  // "Editar mi grupo": exclusivo de admin de grupo — un super_admin no
+  // "pertenece" a un único grupo (ve/administra todos, ya tiene su propia
+  // pestaña "Grupos" para eso, ver views/grupos.js), así que la opción no
+  // aplica acá (fix 2026-08-30).
+  if (auth.isAdmin()) {
     ov.querySelector('#adm-editar-grupo')?.addEventListener('click', async () => {
-      const grupoId = auth.isSuperAdmin() ? store.viewingGrupoId : auth.grupo();
+      const grupoId = auth.grupo();
       if (grupoId == null) {
         toast.err('Elegí un grupo de extensión en la barra superior primero.');
         return;
       }
-      // store.grupos solo se carga para super_admin — un admin normal
-      // necesita el nombre de SU grupo aparte para prellenar el campo.
       const nombre = store.grupos.find(g => String(g.id) === String(grupoId))?.nombre
         || await _fetchGrupoNombre(grupoId);
       openEditGrupoModal({ id: grupoId, nombre });
@@ -244,13 +239,45 @@ export async function openPanel() {
   ov.querySelector('#adm-prof-form').addEventListener('submit', _guardarPerfil);
   ov.querySelector('#adm-pass-form').addEventListener('submit', _cambiarPassword);
 
+  ov.querySelector('#adm-logout').addEventListener('click', () => {
+    auth.signOut(); toast.info('Sesión cerrada.'); close();
+  });
+}
+
+// ── Modal "Máquina del Tiempo" (respaldos del conteo) ──
+// Separado del panel de "Mi perfil" (openPanel, fix 2026-08-30): antes los
+// respaldos vivían mezclados ahí adentro, junto con editar nombre/
+// contraseña/grupo — una herramienta de recuperación de datos sin relación
+// con la sesión propia. Ahora es su propio modal, alcanzable solo desde el
+// botón "Máquina del Tiempo" del pie de Ingreso Rápido (admin/super_admin,
+// ver ingresorapido.js#_wireAdminTools).
+export async function openTimeMachine() {
+  if (!auth.isLoggedIn() || !auth.hasAdminRights()) return;
+  await checkpoints.load();
+
+  const ov = modal(`
+    <div class="adm-box adm-box-lg">
+      <div class="adm-head">
+        <div>
+          <div class="adm-title">Máquina del tiempo</div>
+          <div class="adm-sub">Respaldos del conteo</div>
+        </div>
+        <button class="adm-x" data-close>&times;</button>
+      </div>
+      <div class="adm-sec">
+        <div class="adm-sec-top">
+          <span class="adm-sec-title">Respaldos del conteo</span>
+          <button class="adm-mini" id="adm-cp-new">+ Crear respaldo</button>
+        </div>
+        <div class="adm-cp-list" id="adm-cp-list"></div>
+      </div>
+    </div>`);
+
+  _paintCpList(ov);
   ov.querySelector('#adm-cp-new')?.addEventListener('click', async () => {
     await checkpoints.create(auth.name());
     toast.ok('Respaldo creado.');
     _paintCpList(ov);
-  });
-  ov.querySelector('#adm-logout').addEventListener('click', () => {
-    auth.signOut(); toast.info('Sesión cerrada.'); close();
   });
 }
 
