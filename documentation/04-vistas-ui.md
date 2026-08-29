@@ -71,7 +71,12 @@ Offline-first, respaldado por IndexedDB. Reemplaza el viejo panel único
   2026-08-29) para acortar la ventana en la que dos grupos ven "hueco" el
   mismo insumo nuevo. Esto es solo UX: la integridad (que no queden dos
   filas de `products` duplicadas si aun así chocan) la garantiza
-  `add_product_to_grupo` del lado del servidor — ver más abajo.
+  `add_product_to_grupo` del lado del servidor — ver más abajo. También se
+  recarga de inmediato (`refreshCatalogCache()`, fix 2026-08-30) al vincular
+  o crear una categoría (`store.createCategory` dispara
+  `store.onCategoriesChanged()`, cableado en `app.js#boot()` para no crear
+  un import circular con `admin.js`) — antes había que esperar el próximo
+  ciclo de sync para que la categoría nueva sumara sus productos a la caché.
   **Bug aparte que sí la vaciaba del todo para `super_admin`** (fix
   2026-08-29): el filtro `mine` (insumos que "ya cuento", para no
   resugerirlos) se armaba con `store.items` directo — para un super_admin

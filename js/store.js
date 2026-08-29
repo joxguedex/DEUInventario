@@ -65,6 +65,15 @@ export const store = {
   viewingGrupoId: _loadViewingGrupo(),
   contadorNombre: '',
   _allCategoryNames: [],   // catálogo GLOBAL de nombres de categoría (cualquier grupo) — buscador de creación
+  _catChangeListeners: [], // ver onCategoriesChanged()
+
+  // Suscripción liviana para "el catálogo de categorías de mi grupo acaba
+  // de cambiar" (hoy solo dispara createCategory()) — permite que
+  // ingresorapido.js refresque su caché de "usados por otros grupos" sin
+  // que conteo.js/admin.js tengan que importarlo directo (evita un import
+  // circular con admin.js, que ingresorapido.js ya importa). Cableado
+  // desde app.js#boot(), no acá.
+  onCategoriesChanged(cb) { this._catChangeListeners.push(cb); },
 
   setViewingGrupo(id) {
     this.viewingGrupoId = id == null ? null : Number(id);
@@ -169,6 +178,7 @@ export const store = {
   async createCategory(nombre, grupoId) {
     const id = await _rpc('create_category', { p_nombre: nombre, p_grupo_id: grupoId ?? this.writeGrupoId() });
     await Promise.all([this.loadCategories(), this.loadAllCategoryNames()]);
+    this._catChangeListeners.forEach(cb => cb());
     return id;
   },
   async renameCategory(id, nombre) {

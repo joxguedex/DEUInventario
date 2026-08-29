@@ -13,7 +13,7 @@ import { renderResumen }  from './views/resumen.js';
 import { renderVoluntarios } from './views/voluntarios.js';
 import { renderGrupos } from './views/grupos.js';
 import { renderDespachos } from './views/despachos.js';
-import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido } from './views/ingresorapido.js';
+import { renderIngresoRapido, openSheet, closeSheet, resetIngresoRapido, refreshCatalogCache } from './views/ingresorapido.js';
 import { renderEgresoRapido, openEgreso, resetEgresoRapido } from './views/egresorapido.js';
 import { initAdmin, renderLoginWall } from './views/admin.js';
 import { initComunicados, refreshComunicados } from './views/comunicados.js';
@@ -426,6 +426,15 @@ async function boot() {
   // Comunicados (pestaña puente con AcopioUCV/UCVComandas)
   modal.init();
   initComunicados();
+
+  // Vincular/crear una categoría (Insumos "+ categoría", "Editar mi
+  // grupo"/"Grupos") agranda de inmediato dónde puede haber sugerencias
+  // "usadas por otros grupos" en Ingreso Rápido — sin esto, la caché
+  // quedaba desactualizada hasta el próximo ciclo de sync (~30s). Cableado
+  // acá en vez de un import directo conteo.js/admin.js → ingresorapido.js
+  // para no crear un ciclo con el import inverso que ya existe
+  // (ingresorapido.js → admin.js, ver openTimeMachine).
+  store.onCategoriesChanged(refreshCatalogCache);
 
   // Panel de Ingreso/Egreso Rápido (persistente / global) — mismo <aside>,
   // dos paneles internos alternados por el switcher (ver _setQaMode).

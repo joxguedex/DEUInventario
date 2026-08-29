@@ -80,6 +80,14 @@ async function _loadCatalogCache() {
 // necesitar un timer propio.
 sync.onChange(() => { _loadCatalogCache(); });
 
+// Recarga puntual del catálogo compartido, sin tocar el resto del estado
+// del panel (a diferencia de resetIngresoRapido) — pensada para disparar
+// desde fuera cuando algo que afecta las sugerencias cambió DE INMEDIATO,
+// sin esperar el próximo ciclo de sync. app.js#boot() la cablea a
+// store.onCategoriesChanged() (vincular/crear una categoría nueva agranda
+// las categorías donde puede haber sugerencias "usadas por otros grupos").
+export function refreshCatalogCache() { _loadCatalogCache(); }
+
 export function renderIngresoRapido(shellEl, opts = {}) {
   _shell = shellEl;
   _host = shellEl.querySelector('#qa-panel-ingreso') || shellEl;
