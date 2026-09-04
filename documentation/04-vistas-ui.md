@@ -345,11 +345,22 @@ reatribuye automáticamente todo el historial de esa persona a la nueva
 cédula.
 
 **Listado** (`list_users_with_access`, RPC): todos los usuarios con acceso
-(rol no nulo, excluye admins), con nombre/correo/rol/área/teléfono/activo.
-Por fila: Editar, Activar/Desactivar (`set_active`, baneo nativo de Auth,
-reversible sin reconfigurar nada), Revocar (`revoke_access`, limpia rol/área
-y cierra sesión de inmediato — no borra la persona ni su cuenta, se puede
-volver a otorgar acceso después).
+(rol no nulo). Un `super_admin` ve admin+coordinador de TODOS los grupos
+(con el nombre del grupo); un admin normal solo ve coordinador de su propio
+grupo, nunca a otros admins. Fila: nombre/correo/rol/área/teléfono/activo,
+Activar/Desactivar (`set_active`, baneo nativo de Auth, reversible sin
+reconfigurar nada), Revocar (`revoke_access`, limpia rol/área y cierra
+sesión de inmediato — no borra la persona ni su cuenta, se puede volver a
+otorgar acceso después).
+
+**Editar** (`puedeEditar`, fix 2026-09-05) — visible para cualquier
+coordinador, y para un `admin` de grupo **solo cuando quien mira es
+super_admin** (el único que puede tocar una cuenta admin, ver `_guardTarget`
+en `manage-users/index.ts`); nunca se ofrece para `super_admin`. Al guardar
+sobre un admin, el submit se salta `update_area` (Edge Function) — la
+rechaza siempre del lado del servidor porque un admin no tiene categoría
+propia — pero sí corre `admin_update_person`, `update_email` y, si se
+escribió una, `reset_password`.
 
 ## `views/grupos.js` — Grupos de extensión (super_admin-only)
 

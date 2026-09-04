@@ -358,6 +358,12 @@ export function renderVoluntarios(container) {
       const email = container.querySelector('#vol-edit-email').value.trim();
       const area = container.querySelector('#vol-edit-area').value;
       const nuevaPass = container.querySelector('#vol-edit-pass').value;
+      // Un admin de grupo no tiene categoría propia — update_area lo rechaza
+      // siempre del lado del servidor (sea quien sea el que llame), así que
+      // ni se intenta para ese rol (ver puedeEditar más abajo, que ahora sí
+      // deja que un super_admin edite admins, solo que sin tocar el área).
+      const editandoRole = _lastUsers.find(u => u.ci === ci)?.role;
+      const esAdmin = editandoRole === 'admin' || editandoRole === 'super_admin';
 
       // Paso 1: datos de la persona (RPC normal — nombre/apellido/teléfono/
       // cédula son columnas de `persons`, no necesitan la Admin API).
@@ -370,7 +376,7 @@ export function renderVoluntarios(container) {
       // partir de acá se usa la cédula NUEVA (admin_update_person ya migró
       // la fila si cambió).
       await _edgeFn('update_email', { ci: nuevaCi, email });
-      await _edgeFn('update_area', { ci: nuevaCi, area });
+      if (!esAdmin) await _edgeFn('update_area', { ci: nuevaCi, area });
       if (nuevaPass) await _edgeFn('reset_password', { ci: nuevaCi, new_password: nuevaPass });
 
       toast.ok('Usuario actualizado.');
@@ -459,10 +465,13 @@ async function loadVolunteers(container) {
 
     listEl.innerHTML = data.map(v => {
       const nombreEsc = (v.name || '').replace(/'/g, "\\'") + ' ' + (v.surname || '').replace(/'/g, "\\'");
-      // "Editar" (nombre/correo/ÁREA) no aplica a un admin — un admin no
-      // tiene categoría propia y update_area lo rechaza siempre del lado
-      // del servidor; activar/desactivar y revocar sí funcionan igual.
-      const puedeEditar = v.role !== 'admin' && v.role !== 'super_admin';
+      // "Editar" (nombre/correo/contraseña) SÍ aplica a un admin de grupo,
+      // pero solo cuando quien mira es super_admin (el único con permiso
+      // para tocar cuentas admin, ver _guardTarget en manage-users) — el
+      // área nunca se toca para ese rol (no tiene categoría propia, ver el
+      // submit del form de edición más arriba). A un super_admin no se le
+      // ofrece editar a otro super_admin desde acá.
+      const puedeEditar = v.role !== 'super_admin' && (v.role !== 'admin' || auth.isSuperAdmin());
       const grupoBadge = auth.isSuperAdmin()
         ? `<span style="padding:2px 9px; border-radius:20px; font-weight:600; font-size:11px; background:var(--blu-bg); color:var(--blue);">${escHtml(v.grupo_nombre || '—')}</span>`
         : '';
