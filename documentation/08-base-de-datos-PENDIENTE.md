@@ -179,7 +179,10 @@ suyo (`app_metadata.grupo_id`).
   línea y filtra RLS.
 - **`persons`**: `ci` (PK), `name`, `surname`, `phone_id` (FK, `NOT NULL`),
   `categoria` (enum heredado, sin uso propio de GBSInventario),
-  `auth_user_id` (`NULL` = persona sin inicio de sesión).
+  `auth_user_id` (`NULL` = persona sin inicio de sesión), `grupo_id` (FK,
+  **nullable** desde 2026-09-05 — un super_admin no pertenece a ningún grupo
+  en particular; `create_person` solo exige uno real para admin/coordinador,
+  ver `supabase/2026-09-05-persons-grupo-id-nullable.sql`).
 - **`phones`**: `id`, `company_code`, `number`, `UNIQUE(company_code, number)`.
 - **`comandas`** / **`comanda_items`**: documento de entrega generado por
   `create_comanda_rapida` (`origen='rapida'`) — `comandas.notas` guarda el

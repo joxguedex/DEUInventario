@@ -209,7 +209,12 @@ create table sibex.persons (
   auth_user_id  uuid unique references auth.users (id) on delete set null,
   -- Directorio separado por grupo (decisión explícita) — evita que un
   -- coordinador de un grupo vea nombres/teléfonos de personas de otro.
-  grupo_id      bigint not null references sibex.grupos (id),
+  -- NULLABLE (2026-09-05): un super_admin no pertenece a ningún grupo en
+  -- particular (ve/administra todos) — forzarle uno sería arbitrario. Las
+  -- policies (can_access_grupo, más abajo) y RLS ya contemplan grupo_id
+  -- null vía el atajo is_super_admin(); solo admin/coordinador exigen uno
+  -- real (ver create_person, sección 8).
+  grupo_id      bigint references sibex.grupos (id),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
@@ -886,8 +891,9 @@ revoke execute on function sibex.link_person_login(bigint, uuid) from sibex, ano
 -- crear a quién" vive en RLS sobre `persons` (sección 9), esta RPC solo
 -- resuelve el alta de phones + persons en una transacción. p_grupo_id: un
 -- admin/coordinador siempre crea dentro de su propio grupo (se ignora
--- cualquier otro valor que mande el cliente); super_admin debe indicarlo
--- explícitamente (no tiene uno propio).
+-- cualquier otro valor que mande el cliente); super_admin puede indicar
+-- uno explícito, o ninguno — no tiene uno propio (grupo_id nullable,
+-- 2026-09-05).
 create or replace function sibex.create_person(
   p_ci bigint, p_name text, p_surname text,
   p_phone_company_code text, p_phone_number text,
@@ -901,8 +907,12 @@ begin
   if sibex.current_role() not in ('admin', 'coordinador', 'super_admin') then
     raise exception 'Rol sin permiso para crear personas';
   end if;
+  -- Un super_admin NO tiene grupo propio (ve/administra todos) — puede
+  -- crear su propia persona (nombre/ci/teléfono, para "Mi perfil") sin
+  -- indicar ninguno, a diferencia de admin/coordinador, que siempre crean
+  -- dentro del suyo (current_grupo_id() nunca debería darles null).
   v_grupo := case when sibex.is_super_admin() then p_grupo_id else sibex.current_grupo_id() end;
-  if v_grupo is null then
+  if v_grupo is null and not sibex.is_super_admin() then
     raise exception 'Falta indicar el grupo de extensión';
   end if;
 

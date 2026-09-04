@@ -371,8 +371,10 @@ para que dar de alta una organización entera no quedara escondido.
   nueva, desvincular con opción de forzar el borrado lógico de los conteos
   vivos de esa categoría en el grupo).
 - **Crear grupo** (`#grp-form`): un solo campo de nombre → `store.createGrupo`.
-- **Stats**: grupos totales, y cuál está "en gestión ahora" (el elegido en
-  el selector, o "Todos" si no hay ninguno fijado).
+- **Stats**: solo grupos totales — la card "en gestión ahora" se quitó
+  (2026-09-05): siempre coincidía con "Todos" o con exactamente una tarjeta
+  de la lista de abajo (que ya la marca con el badge "En gestión ahora" y el
+  estilo `.active`), así que era información duplicada sin aportar nada.
 - **Móvil**: comparte pestaña de bottom nav con Usuarios
   (`[data-page="accesos"]`, sub-tab "Grupos" — oculto en el sub-tab para
   cuentas no-super_admin, ver `app.js#applyRBAC()`); en desktop sigue

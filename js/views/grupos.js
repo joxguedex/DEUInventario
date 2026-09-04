@@ -32,9 +32,8 @@ export function renderGrupos(container, { onChange } = {}) {
         </div>
       </div>
 
-      <div class="stats-cards" style="grid-template-columns:repeat(2,1fr); margin-bottom:18px;">
+      <div class="stats-cards" style="margin-bottom:18px;">
         <div class="stat-card stat-card-total"><div class="stat-card-num" id="grp-stat-total">–</div><div class="stat-card-lbl">grupos totales</div></div>
-        <div class="stat-card stat-card-ok"><div class="stat-card-num" id="grp-stat-activo" style="font-size:1.1rem;">–</div><div class="stat-card-lbl">en gestión ahora</div></div>
       </div>
 
       <div class="stats-panel">
@@ -86,16 +85,11 @@ async function _wire(container, { onChange }) {
 function _paintList(container, { onChange }) {
   const box = container.querySelector('#grp-list');
   const statTotal = container.querySelector('#grp-stat-total');
-  const statActivo = container.querySelector('#grp-stat-activo');
   if (!box) return;
 
   const activo = store.viewingGrupoId;
   const grupos = [...store.grupos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   if (statTotal) statTotal.textContent = grupos.length.toLocaleString('es-VE');
-  if (statActivo) {
-    const g = grupos.find(x => String(x.id) === String(activo));
-    statActivo.textContent = g ? g.nombre : 'Todos';
-  }
 
   if (!grupos.length) {
     box.innerHTML = `<div class="reg-empty">
