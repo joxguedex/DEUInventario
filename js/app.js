@@ -222,6 +222,19 @@ let _contadorSyncCi = null;
 // signOut() primero, así que nunca dispara esta transición.
 let _wasLoggedIn = false;
 
+// IndexedDB (js/db.js) es UN SOLO almacén compartido por todo el navegador,
+// sin separar por usuario/grupo — si dos cuentas distintas inician sesión en
+// el mismo dispositivo sin recargar la página entre una y otra (login →
+// logout → login, todo dentro de la misma SPA), el catálogo que dejó la
+// sesión anterior (p.ej. TODOS los grupos, si era un super_admin) seguía
+// mostrándose bajo la cuenta nueva: visibleItems() para admin/coordinador
+// confía en que IndexedDB solo contiene SU grupo, porque en el flujo normal
+// (pull incremental con RLS) así es — pero un pull incremental nunca "borra"
+// lo que ya no debería ser visible, solo agrega deltas nuevos. Se recuerda
+// acá qué cuenta fue la última en loguear en este navegador para detectar el
+// cambio y purgar el catálogo local antes de recargarlo con el token nuevo.
+const LAST_UID_KEY = 'gbs-inv-last-auth-uid';
+
 export async function checkAuth() {
   const loginWall = document.getElementById('login-wall');
   const appShell = document.getElementById('app-shell');
@@ -248,15 +261,53 @@ export async function checkAuth() {
     loginWall.style.display = 'none';
     appShell.style.display = 'block';
 
-    // Categorías: store.init() intentó cargarlas antes de que existiera
-    // sesión (RLS exige `to authenticated`, ver supabase/new-project-
-    // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
-    // hay un access_token real, y ANTES del bloque de abajo: resetIngreso
-    // Rapido() recarga también el catálogo compartido de "usados por otros
-    // grupos" (ver ingresorapido.js#_loadCatalogCache), que depende de
-    // store.categories ya al día — si no, el mismo boot-antes-de-login que
-    // dejaba esa caché vacía para siempre se repetía en cada login.
-    if (freshLogin) { nav('resumen'); await store.loadCategories(); if (auth.canEditInventory()) _setQaMode('ingreso'); }
+    if (freshLogin) {
+      nav('resumen');
+
+      // ¿Cambió la cuenta respecto a la última que logueó en este
+      // dispositivo (o es la primera vez)? Si el catálogo/checkpoint local
+      // quedaron de otra cuenta/grupo, hay que purgarlos ANTES de recargar
+      // — ver comentario de LAST_UID_KEY arriba. `queue` NO se toca: son
+      // operaciones pendientes de subir, independientes del catálogo, y
+      // sync.run() las sube primero (push antes que pull) así que nada se
+      // pierde aunque pertenezcan a la cuenta anterior.
+      const uid = auth.session?.userId || null;
+      let lastUid = null;
+      try { lastUid = localStorage.getItem(LAST_UID_KEY); } catch {}
+      const identityChanged = !!uid && lastUid !== uid;
+      try { if (uid) localStorage.setItem(LAST_UID_KEY, uid); } catch {}
+
+      if (identityChanged) {
+        await db.clear();
+        await db.logClear();
+        sync.resetCheckpoint();
+        store.setViewingGrupo(null);
+      }
+
+      // Categorías: store.init() intentó cargarlas antes de que existiera
+      // sesión (RLS exige `to authenticated`, ver supabase/new-project-
+      // schema.sql §11) — casi seguro llegaron vacías. Reintentar ahora que
+      // hay un access_token real, y ANTES del bloque de abajo: resetIngreso
+      // Rapido() recarga también el catálogo compartido de "usados por otros
+      // grupos" (ver ingresorapido.js#_loadCatalogCache), que depende de
+      // store.categories ya al día — si no, el mismo boot-antes-de-login que
+      // dejaba esa caché vacía para siempre se repetía en cada login.
+      await store.loadCategories();
+      if (auth.isSuperAdmin()) await store.loadGrupos();
+      if (auth.canEditInventory()) _setQaMode('ingreso');
+
+      // Re-sincroniza YA con el token de esta sesión: boot() corrió
+      // store.init()/sync.run() antes de que existiera (o con la sesión
+      // anterior), así que store.items todavía no refleja lo que ESTA
+      // cuenta puede ver — sin esto, el catálogo se quedaba vacío/incorrecto
+      // hasta el próximo ciclo automático (cada 30s) o un refresco manual
+      // (ver documentation/06-sincronizacion-cliente.md).
+      if (sync.enabled) {
+        try { await sync.run(); } catch (e) { console.error('resync tras login', e); }
+        store.items = await db.getAll();
+        store.logs  = await db.logGetAll();
+      }
+    }
 
     // El panel de agregado rápido se pinta en boot(), ANTES de que el usuario
     // cruce el muro de login: en esa primera sesión auth.name() todavía está

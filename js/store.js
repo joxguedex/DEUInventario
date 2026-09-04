@@ -109,6 +109,18 @@ export const store = {
     await _rpc('update_grupo', { p_id: id, p_nombre: nombre });
     await this.loadGrupos();
   },
+  // Elimina un grupo de extensión completo (super_admin-only, ver
+  // supabase#delete_grupo). Sin `force`, el servidor bloquea si el grupo
+  // tiene cualquier dato real asociado (personas, categorías vinculadas,
+  // insumos, movimientos, comandas o comunicados) y devuelve un mensaje con
+  // el detalle — la UI (views/admin.js) lo usa para ofrecer forzar el
+  // borrado en cascada. Si el grupo eliminado era el que este super_admin
+  // tenía elegido en la barra superior, hay que soltarlo (ya no existe).
+  async deleteGrupo(id, { force = false } = {}) {
+    await _rpc('delete_grupo', { p_id: id, p_force: !!force });
+    if (this.viewingGrupoId === id) this.setViewingGrupo(null);
+    await this.loadGrupos();
+  },
 
   // ── Categorías — catálogo COMPARTIDO entre grupos (revisión "productos
   // multigrupo", 2026-08-25): una categoría ya no pertenece a un único

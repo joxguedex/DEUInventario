@@ -96,6 +96,36 @@ se cierra automáticamente antes de mostrar el shell. Cada transición real
 login-wall → app-shell navega a **Resumen** (no a la última pestaña que
 haya quedado abierta de una sesión anterior en el mismo dispositivo).
 
+### Aislamiento entre cuentas del mismo dispositivo (2026-09-04)
+
+IndexedDB (`js/db.js`) es **un solo almacén compartido por todo el
+navegador**, sin separar por usuario/grupo — y el pull de `sync.js` es
+incremental (solo agrega deltas nuevos desde el último checkpoint, nunca
+"borra" lo que dejó de ser visible). Cerrar sesión y entrar con OTRA cuenta
+en el mismo dispositivo, sin recargar la página, dejaba el catálogo de la
+sesión anterior pisado encima: `store.visibleItems()` para admin/coordinador
+confía en que IndexedDB solo contiene lo de SU grupo (así es en el flujo
+normal — RLS ya filtra el pull), así que un admin de un grupo nuevo veía lo
+que un super_admin había visto antes en ese mismo navegador (todos los
+grupos). El caso inverso también fallaba: tras un login interactivo (sin
+recarga de página), nada disparaba un `sync.run()` con el token ya
+autenticado — `store.init()` había corrido en `boot()` antes de que
+existiera sesión, así que el catálogo se quedaba vacío/incorrecto hasta el
+próximo ciclo automático (30s) o un refresco manual.
+
+`checkAuth()` ahora, en cada `freshLogin` (transición login-wall →
+app-shell):
+1. Compara `auth.session.userId` contra el último uid que inició sesión en
+   este navegador (`localStorage['gbs-inv-last-auth-uid']`). Si cambió (o es
+   la primera vez), purga el catálogo local (`db.clear()` + `db.logClear()`)
+   y el checkpoint de sync (`sync.resetCheckpoint()`) — `queue` NO se toca
+   (operaciones pendientes de subir, independientes del catálogo; `_push()`
+   corre antes que `_pull()` en `sync.run()`, así que nada se pierde aunque
+   la cola pertenezca a la cuenta anterior).
+2. Recarga categorías/grupos y fuerza un `sync.run()` completo con el token
+   YA autenticado, rehidratando `store.items`/`store.logs` desde IndexedDB —
+   sin esperar al próximo ciclo de 30s.
+
 ## `applyRBAC()` (`js/app.js`)
 
 - **"Usuarios"** se oculta entera del nav (desktop y móvil) para cualquier

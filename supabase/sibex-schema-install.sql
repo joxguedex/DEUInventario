@@ -1405,8 +1405,8 @@ $$;
 grant execute on function sibex.update_product_category(bigint, bigint) to authenticated;
 
 -- Grupos de extensión — CRUD mínimo, super_admin-only (mismo patrón que
--- create_category/update_category). Sin delete en esta versión: igual de
--- arriesgado que borrar una categoría con productos, un nivel más arriba.
+-- create_category/update_category). delete_grupo vive más abajo, después de
+-- update_grupo.
 create or replace function sibex.create_grupo(p_nombre text) returns bigint
 language plpgsql security definer set search_path = sibex as $$
 declare v_id bigint;
@@ -1442,6 +1442,67 @@ begin
 end;
 $$;
 grant execute on function sibex.update_grupo(bigint, text) to authenticated;
+
+-- Elimina un grupo de extensión COMPLETO — exclusivo de super_admin, desde
+-- la pestaña "Grupos" (views/grupos.js → openEditGrupoModal). Sin `force`,
+-- bloquea si el grupo tiene cualquier dato real asociado (personas,
+-- categorías vinculadas, insumos con conteo, movimientos, comandas o
+-- comunicados) y devuelve el detalle en el mensaje — la UI lo usa para
+-- ofrecer forzar el borrado en cascada (mismo patrón que delete_category).
+-- Con `force = true`:
+--   - Revoca el acceso de cualquier cuenta de Auth del grupo con un UPDATE
+--     directo sobre auth.users (mismo criterio que delete_category más
+--     arriba: tocar app_metadata no requiere la Admin API, solo crear/
+--     borrar la cuenta en sí la requeriría) — la cuenta queda huérfana
+--     (sin rol/área/grupo), login() la rechaza de inmediato (ver
+--     js/auth.js#login), aunque el registro de auth.users no se borra.
+--   - Borra movements/comandas del grupo (cascadean solas sus _items/
+--     _imagenes, ver FKs de la sección 2/6) e inventory/comms.
+--   - Borra persons del grupo: seguro por diseño — person_status/
+--     conductores están declaradas "on delete cascade" contra persons(ci), y
+--     movements/comandas/requests/comanda_items solo la REFERENCIAN con
+--     "on delete set null" (y las de este grupo ya se borraron arriba).
+--   - category_grupos y por último la fila de grupos — category_grupos
+--     tiene "on delete cascade" contra grupos, así que un DELETE de la fila
+--     de grupos ya la limpia sola; se deja explícito arriba (en el conteo
+--     del bloqueo sin force) solo para que el mensaje de error sea preciso.
+create or replace function sibex.delete_grupo(p_id bigint, p_force boolean default false) returns void
+language plpgsql security definer set search_path = sibex as $$
+declare
+  v_personas int; v_inventario int; v_movimientos int; v_comandas int; v_comunicados int; v_categorias int;
+begin
+  if not sibex.is_super_admin() then
+    raise exception 'Solo un super administrador puede eliminar grupos de extensión';
+  end if;
+  if not exists (select 1 from sibex.grupos where id = p_id) then
+    raise exception 'Ese grupo no existe';
+  end if;
+
+  select count(*) into v_personas    from sibex.persons where grupo_id = p_id;
+  select count(*) into v_inventario  from sibex.inventory where grupo_id = p_id and deleted_at is null;
+  select count(*) into v_movimientos from sibex.movements where grupo_id = p_id;
+  select count(*) into v_comandas    from sibex.comandas where grupo_id = p_id;
+  select count(*) into v_comunicados from sibex.comms where grupo_id = p_id;
+  select count(*) into v_categorias  from sibex.category_grupos where grupo_id = p_id;
+
+  if not p_force and (v_personas + v_inventario + v_movimientos + v_comandas + v_comunicados + v_categorias) > 0 then
+    raise exception 'El grupo tiene % persona(s), % insumo(s) con conteo, % movimiento(s), % comanda(s), % comunicado(s) y % categoría(s) vinculada(s)',
+      v_personas, v_inventario, v_movimientos, v_comandas, v_comunicados, v_categorias;
+  end if;
+
+  update auth.users
+     set raw_app_meta_data = raw_app_meta_data - 'role' - 'area' - 'grupo_id'
+   where (raw_app_meta_data ->> 'grupo_id')::bigint = p_id;
+
+  delete from sibex.comandas  where grupo_id = p_id;
+  delete from sibex.movements where grupo_id = p_id;
+  delete from sibex.inventory where grupo_id = p_id;
+  delete from sibex.comms     where grupo_id = p_id;
+  delete from sibex.persons   where grupo_id = p_id;
+  delete from sibex.grupos    where id = p_id;
+end;
+$$;
+grant execute on function sibex.delete_grupo(bigint, boolean) to authenticated;
 
 -- Autoservicio de perfil — a diferencia del sistema viejo, el actor NUNCA
 -- se manda como parámetro (p_actor_ci): sale de auth.uid() vía el JWT ya

@@ -453,7 +453,7 @@ async function loadVolunteers(container) {
     _lastUsers = data;
 
     if (!data.length) {
-      listEl.innerHTML = `<div class="reg-empty"><span class="reg-empty-t">No hay coordinadores con acceso todavía</span></div>`;
+      listEl.innerHTML = `<div class="reg-empty"><span class="reg-empty-t">No hay usuarios con acceso todavía</span></div>`;
       return;
     }
 

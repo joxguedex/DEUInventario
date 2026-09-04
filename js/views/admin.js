@@ -399,6 +399,13 @@ export function openEditGrupoModal(grupo, { onChange } = {}) {
       <div class="ren-sugg" id="eg-cat-sugg"></div>
       <div class="adm-err" id="eg-cat-err"></div>
       <button class="adm-btn" id="eg-cat-add">+ Vincular / crear</button>
+
+      ${auth.isSuperAdmin() ? `
+      <div class="adm-sec-top" style="margin-top:22px;">
+        <span class="adm-sec-title" style="color:var(--red);">Zona de peligro</span>
+      </div>
+      <div class="adm-note" style="margin:0 0 10px;">Elimina el grupo por completo — su inventario, categorías vinculadas, usuarios, movimientos, comandas y comunicados. Esta acción no se puede deshacer.</div>
+      <button class="adm-btn" id="eg-delete" style="border-color:var(--red); color:var(--red);">Eliminar grupo</button>` : ''}
     </div>`);
 
   const nombreInp = ov.querySelector('#eg-nombre');
@@ -518,6 +525,41 @@ export function openEditGrupoModal(grupo, { onChange } = {}) {
   });
 
   _paintCatList();
+
+  // Eliminar grupo (super_admin-only, ver store.js#deleteGrupo). Igual
+  // criterio que desvincular categoría arriba: primero SIN forzar (el
+  // servidor bloquea si hay datos reales y devuelve el detalle), y si
+  // bloquea, se ofrece forzar el borrado en cascada con ese detalle a la
+  // vista en vez de un mensaje genérico.
+  ov.querySelector('#eg-delete')?.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'Eliminar grupo',
+      body: `¿Eliminar "${escHtml(grupo.nombre || '')}"? Esta acción no se puede deshacer.`,
+      confirmText: 'Eliminar', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await store.deleteGrupo(grupo.id);
+      toast.ok('Grupo eliminado.');
+      onChange?.();
+      close();
+    } catch (ex) {
+      const force = await confirmDialog({
+        title: 'El grupo tiene datos asociados',
+        body: `${escHtml(ex.message || '')} ¿Eliminar TODO igual (insumos, usuarios, movimientos, comandas y comunicados de este grupo)?`,
+        confirmText: 'Eliminar todo', danger: true,
+      });
+      if (!force) return;
+      try {
+        await store.deleteGrupo(grupo.id, { force: true });
+        toast.ok('Grupo y todos sus datos eliminados.');
+        onChange?.();
+        close();
+      } catch (ex2) {
+        toast.err(ex2.message || 'No se pudo eliminar el grupo.');
+      }
+    }
+  });
 }
 
 function _paintCpList(ov) {

@@ -421,6 +421,17 @@ vivos, ofrece un segundo `confirmDialog` para reintentar con `force: true`)
 + un buscador para vincular una categoría existente o crear una nueva
 (`store.searchCategoryNames` + `store.createCategory`).
 
+**"Zona de peligro" — Eliminar grupo** (2026-09-04, exclusivo de
+`auth.isSuperAdmin()`, oculto por completo del modal para un admin normal
+editando el suyo propio): botón que llama `store.deleteGrupo(id)` →
+RPC `delete_grupo`. Mismo patrón de dos pasos que "Desvincular" categoría
+arriba: primero sin forzar (el servidor bloquea si el grupo tiene
+personas/categorías/insumos/movimientos/comandas/comunicados y devuelve el
+detalle en el mensaje), y si bloquea, un segundo `confirmDialog` ofrece
+reintentar con `force: true` (borra todo lo del grupo en cascada, incluidas
+las cuentas de sus usuarios — quedan sin rol/área, `login()` las rechaza de
+inmediato). No existía ninguna forma de borrar un grupo antes de esto.
+
 ## `components/toast.js`, `components/modal.js`, `components/confirm.js`
 
 - **`toast.js`** — `toast.ok/err/info(msg)`: crea un `<div>` en
