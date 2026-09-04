@@ -1500,15 +1500,25 @@ begin
       v_personas, v_inventario, v_movimientos, v_comandas, v_comunicados, v_categorias;
   end if;
 
+  -- Nunca tocar una cuenta super_admin acá: no tiene grupo propio, así que
+  -- si el suyo quedó con un grupo_id viejo apuntando a ESTE grupo (arrastre
+  -- de antes de que grupo_id pudiera ser null para super_admin), borrarle
+  -- el rol la dejaría sin acceso a la plataforma al validar el próximo JWT.
   update auth.users
      set raw_app_meta_data = raw_app_meta_data - 'role' - 'area' - 'grupo_id'
-   where (raw_app_meta_data ->> 'grupo_id')::bigint = p_id;
+   where (raw_app_meta_data ->> 'grupo_id')::bigint = p_id
+     and raw_app_meta_data ->> 'role' <> 'super_admin';
 
   delete from sibex.comandas  where grupo_id = p_id;
   delete from sibex.movements where grupo_id = p_id;
   delete from sibex.inventory where grupo_id = p_id;
   delete from sibex.comms     where grupo_id = p_id;
-  delete from sibex.persons   where grupo_id = p_id;
+  delete from sibex.persons   where grupo_id = p_id
+    and ci not in (
+      select p.ci from sibex.persons p
+      join auth.users u on u.id = p.auth_user_id
+      where u.raw_app_meta_data ->> 'role' = 'super_admin'
+    );
   delete from sibex.grupos    where id = p_id;
 end;
 $$;
