@@ -206,6 +206,14 @@ function _checkNuevos() {
 }
 
 export function refreshComunicados() {
+  // Sin sesión (muro de login, o justo después de borrar caché/storage y
+  // perder el token) no hay nada que cargar todavía — `comms` exige RLS
+  // `to authenticated`, así que este fetch fallaría siempre (401/403) y
+  // disparaba un toast de error de conexión falso apenas se abría la app,
+  // repitiéndose cada 25s (ver setInterval en initComunicados) mientras el
+  // usuario ni siquiera había iniciado sesión. checkAuth() ya llama a esto
+  // de nuevo en cuanto hay sesión real (ver app.js).
+  if (!auth.isLoggedIn()) return;
   store.loadCommunications()
     .then(() => { _checkNuevos(); renderComunicados(); _updateBadge(); })
     .catch(err => {

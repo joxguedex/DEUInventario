@@ -275,6 +275,16 @@ Pestaña por defecto al iniciar sesión.
   nuevos desde la última lectura y muestra un toast (sin bombardear con el
   backlog en la primera carga tras un login), actualiza el badge del nav
   (`#nb-comms`/`#nb-comms-mobile`).
+- **`refreshComunicados()` no intenta nada sin sesión** (fix 2026-09-04):
+  `comms` exige RLS `to authenticated`, así que sin `auth.isLoggedIn()` el
+  fetch siempre fallaba (401/403) — `initComunicados()` corre en `boot()`
+  antes de loguear (o justo después de borrar caché/storage y perder el
+  token), y el polling de 25s lo repetía sin parar mientras el usuario
+  seguía en el muro de login, mostrando "No se pudieron cargar los
+  comunicados" aunque no hubiera ningún comunicado que cargar todavía.
+  `checkAuth()` (`app.js`) llama a `refreshComunicados()` de nuevo en cada
+  login para no esperar hasta 25s a que el badge/lista reflejen la cuenta
+  nueva.
 
 ## `views/voluntarios.js` — Usuarios (admin/super_admin)
 

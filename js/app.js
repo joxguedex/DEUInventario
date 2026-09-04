@@ -307,6 +307,12 @@ export async function checkAuth() {
         store.items = await db.getAll();
         store.logs  = await db.logGetAll();
       }
+
+      // Comunicados: initComunicados()/su setInterval de 25s ya se saltan el
+      // fetch mientras no hay sesión (ver comunicados.js#refreshComunicados)
+      // — al loguear, refrescar de una vez en vez de esperar hasta 25s para
+      // que el badge/lista reflejen lo que esta cuenta puede ver.
+      refreshComunicados();
     }
 
     // El panel de agregado rápido se pinta en boot(), ANTES de que el usuario
