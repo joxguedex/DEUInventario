@@ -193,7 +193,7 @@ export function renderVoluntarios(container) {
 
       <div class="cnt-topcard" style="margin-top:20px;">
         <div class="ctc-progress-head"><span class="ctc-progress-title">Usuarios con acceso</span></div>
-        <div class="reg-list" id="vol-list" style="margin-top:14px;">
+        <div id="vol-list" style="margin-top:14px;">
           <div class="reg-empty"><span class="reg-empty-t">Cargando usuarios...</span></div>
         </div>
       </div>

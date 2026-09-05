@@ -344,6 +344,16 @@ así que un solo `update persons set ci = ...` dentro de `admin_update_person`
 reatribuye automáticamente todo el historial de esa persona a la nueva
 cédula.
 
+**Bug 2026-09-05 (resuelto)**: `#vol-list` llevaba la clase `reg-list` —
+reutilizada sin darse cuenta de `views/registro.js`, donde esa clase es
+`display:none` por defecto y solo se muestra dentro de un `.reg-day.open`
+(ver `css/styles.css`, acordeón de días). Fuera de ese contexto (acá, y en
+`views/despachos.js#dsp-list`, mismo error) la lista quedaba oculta SIEMPRE,
+sin importar que el RPC trajera los datos bien — parecía "no aparecen los
+usuarios" cuando en realidad el HTML se generaba completo, solo invisible.
+Se quitó la clase de ambos contenedores (no la necesitaban: cada tarjeta ya
+trae su propio fondo/borde inline).
+
 **Listado** (`list_users_with_access`, RPC): todos los usuarios con acceso
 (rol no nulo). Un `super_admin` ve admin+coordinador de TODOS los grupos
 (con el nombre del grupo); un admin normal solo ve coordinador de su propio

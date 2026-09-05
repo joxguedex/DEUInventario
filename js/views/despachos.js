@@ -61,7 +61,7 @@ export function renderDespachos(hostEl) {
           </div>
           <div class="adm-note" style="margin:6px 0 0;">${subt}</div>
         </div>
-        <div class="reg-list" id="dsp-list" style="margin-top:20px;">
+        <div id="dsp-list" style="margin-top:20px;">
           <div class="reg-empty"><span class="reg-empty-t">Cargando despachos...</span></div>
         </div>
       </div>`;
